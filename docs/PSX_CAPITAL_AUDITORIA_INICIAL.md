@@ -64,6 +64,17 @@
 6. **Cobertura:** testes para limites de paginação, filtros de datas, pagamentos parciais, estornos, cheques compensados/devolvidos, reprocessamento Asaas e reconciliação de saldo.
 7. **Validação:** executar lint, typecheck, build e testes disponíveis após cada etapa. Não declarar validado aquilo que não tiver sido executado.
 
+## Segunda etapa — filtros por período em Pagamentos e Fluxo de Caixa
+
+Foram adicionados filtros de data inicial/final em `src/pages/Pagamentos.jsx` e `src/pages/FluxoCaixa.jsx`.
+
+- **Pagamentos:** o intervalo filtra a tabela, os cartões de total/quantidade/ticket médio e o CSV exportado.
+- **Fluxo de Caixa:** o intervalo filtra a tabela, o CSV e os totais de entradas, saídas e saldo líquido do período.
+- **Distinção de conceitos:** o Fluxo de Caixa mantém um indicador separado de saldo acumulado de todos os lançamentos, sem chamá-lo de saldo bancário disponível.
+- **Interface:** datas vazias mantêm a visão histórica completa; o botão de limpar período remove ambos os limites.
+
+Limitação conhecida desta etapa: os filtros ainda são locais às telas e usam a data do próprio registro (`payment_date` e `date`). O filtro gerencial compartilhado (data-base, realizado/previsto e produto) será aplicado após o mapeamento de eventos e relações, para não misturar definições financeiras. Build, lint, typecheck e testes ainda precisam ser executados.
+
 ## Critério de aceite dos filtros
 
 Uma seleção de período deve afetar de forma consistente os cartões, tabelas, gráficos e exportações do mesmo relatório. A data-base escolhida deve ser visível e explícita. A posição atual da carteira não deve ser confundida com movimentação ocorrida no período. Quando não houver dados suficientes para calcular uma métrica com segurança, a interface deve sinalizar isso em vez de apresentar um total aparentemente completo.
