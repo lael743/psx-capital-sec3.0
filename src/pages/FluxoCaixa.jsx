@@ -14,6 +14,8 @@ export default function FluxoCaixa() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   const [form, setForm] = useState({ type: 'entrada', category: '', amount: '', date: today(), description: '', method: 'pix' });
 
   const load = () => {
@@ -47,9 +49,14 @@ export default function FluxoCaixa() {
     load();
   };
 
-  const totalEntradas = entries.filter(e => e.type === 'entrada').reduce((s, e) => s + (e.amount || 0), 0);
-  const totalSaidas = entries.filter(e => e.type === 'saida').reduce((s, e) => s + (e.amount || 0), 0);
-  const saldo = totalEntradas - totalSaidas;
+  const filteredEntries = entries.filter(e => {
+    const entryDate = (e.date || '').slice(0, 10);
+    return (!dateFrom || entryDate >= dateFrom) && (!dateTo || entryDate <= dateTo);
+  });
+  const totalEntradas = filteredEntries.filter(e => e.type === 'entrada').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const totalSaidas = filteredEntries.filter(e => e.type === 'saida').reduce((s, e) => s + (Number(e.amount) || 0), 0);
+  const saldoPeriodo = totalEntradas - totalSaidas;
+  const saldoAtual = entries.reduce((balance, entry) => balance + (entry.type === 'entrada' ? 1 : -1) * (Number(entry.amount) || 0), 0);
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto">
@@ -59,7 +66,7 @@ export default function FluxoCaixa() {
         action={
           <div className="flex items-center gap-2">
             <button
-              onClick={() => exportToCsv(entries, [
+              onClick={() => exportToCsv(filteredEntries, [
                 { key: 'date', label: 'Data' },
                 { key: 'description', label: 'Descrição' },
                 { key: 'category', label: 'Categoria' },
@@ -83,10 +90,23 @@ export default function FluxoCaixa() {
         }
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
-        <StatCard label="Entradas" value={formatCurrency(totalEntradas)} icon={TrendingUp} />
-        <StatCard label="Saídas" value={formatCurrency(totalSaidas)} icon={TrendingDown} variant="danger" />
-        <StatCard label="Saldo Atual" value={formatCurrency(saldo)} icon={DollarSign} variant={saldo >= 0 ? 'gold' : 'danger'} />
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3 mb-5 p-4 bg-white border border-border rounded-xl">
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data inicial</label>
+          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} className="w-full input-field" />
+        </div>
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data final</label>
+          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} className="w-full input-field" />
+        </div>
+        <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="px-3 py-2.5 text-sm border border-border rounded-lg hover:bg-gray-50">Limpar período</button>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <StatCard label="Entradas no Período" value={formatCurrency(totalEntradas)} icon={TrendingUp} />
+        <StatCard label="Saídas no Período" value={formatCurrency(totalSaidas)} icon={TrendingDown} variant="danger" />
+        <StatCard label="Saldo do Período" value={formatCurrency(saldoPeriodo)} icon={DollarSign} variant={saldoPeriodo >= 0 ? 'gold' : 'danger'} />
+        <StatCard label="Saldo Atual (histórico)" value={formatCurrency(saldoAtual)} sub="Todos os lançamentos" icon={DollarSign} variant={saldoAtual >= 0 ? 'gold' : 'danger'} />
       </div>
 
       {showForm && (
@@ -152,7 +172,7 @@ export default function FluxoCaixa() {
             <Th right className="hidden sm:table-cell">Saldo</Th>
           </TableHead>
           <TableBody>
-            {entries.map(e => (
+            {filteredEntries.map(e => (
               <Tr key={e.id}>
                 <Td muted className="whitespace-nowrap">{formatDate(e.date)}</Td>
                 <Td className="font-medium max-w-[180px] truncate">{e.description}</Td>
@@ -166,7 +186,7 @@ export default function FluxoCaixa() {
                 <Td right mono muted className="hidden sm:table-cell whitespace-nowrap">{e.balance_after !== undefined ? formatCurrency(e.balance_after) : '—'}</Td>
               </Tr>
             ))}
-            {entries.length === 0 && <EmptyRow colSpan={6} message="Nenhum lançamento registrado." />}
+            {filteredEntries.length === 0 && <EmptyRow colSpan={6} message="Nenhum lançamento encontrado neste período." />}
           </TableBody>
         </DataTable>
       )}
