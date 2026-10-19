@@ -1,6 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
 import { formatCurrency, formatDate, daysOverdue, overdueClass } from '@/lib/finance';
 import { fetchAll } from '@/lib/fetchAll';
 import { MessageCircle, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
@@ -21,7 +20,6 @@ function SortIcon({ col, sortCol, sortDir }) {
 
 export default function Cobranca() {
   const [operations, setOperations] = useState([]);
-  const [allOps, setAllOps] = useState([]);
   const [clients, setClients] = useState({});
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState('');
@@ -35,7 +33,6 @@ export default function Cobranca() {
     ]).then(([ops, cls]) => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
-      setAllOps(ops);
       const vencidas = ops.filter(op => {
         if (op.status === 'quitado') return false;
         if (op.etapa !== 'finalizada') return false;
