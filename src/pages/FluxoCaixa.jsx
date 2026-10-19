@@ -106,7 +106,7 @@ export default function FluxoCaixa() {
         <StatCard label="Entradas no Período" value={formatCurrency(totalEntradas)} icon={TrendingUp} />
         <StatCard label="Saídas no Período" value={formatCurrency(totalSaidas)} icon={TrendingDown} variant="danger" />
         <StatCard label="Saldo do Período" value={formatCurrency(saldoPeriodo)} icon={DollarSign} variant={saldoPeriodo >= 0 ? 'gold' : 'danger'} />
-        <StatCard label="Saldo Atual (histórico)" value={formatCurrency(saldoAtual)} sub="Todos os lançamentos" icon={DollarSign} variant={saldoAtual >= 0 ? 'gold' : 'danger'} />
+        <StatCard label="Saldo acumulado" value={formatCurrency(saldoAtual)} sub="Entradas menos saídas registradas" icon={DollarSign} variant={saldoAtual >= 0 ? 'gold' : 'danger'} />
       </div>
 
       {showForm && (
