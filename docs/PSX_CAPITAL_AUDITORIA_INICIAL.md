@@ -78,3 +78,23 @@ Limitação conhecida desta etapa: os filtros ainda são locais às telas e usam
 ## Critério de aceite dos filtros
 
 Uma seleção de período deve afetar de forma consistente os cartões, tabelas, gráficos e exportações do mesmo relatório. A data-base escolhida deve ser visível e explícita. A posição atual da carteira não deve ser confundida com movimentação ocorrida no período. Quando não houver dados suficientes para calcular uma métrica com segurança, a interface deve sinalizar isso em vez de apresentar um total aparentemente completo.
+
+
+## Terceira etapa — rastreamento de compensação de cheques
+
+Nova leitura estática de `src/pages/Cheques.jsx`, `src/lib/syncCheque.js` e `src/pages/Dashboard.jsx` identificou pontos adicionais que precisam ser tratados antes de consolidar os totais:
+
+1. **Data da compensação não persiste no fluxo principal:** o modal de compensação recebe uma data escolhida pelo usuário, mas a chamada `Cheque.update` observada altera o status e os dados do banco sem gravar `compensation_date: data`. Depois, a sincronização tenta relacionar parcelas usando `compensation_date === installment.due_date`. A data exibida/selecionada e a data usada na reconciliação podem divergir.
+2. **Dashboard soma fontes sem vínculo de exclusividade:** `totalPaid` soma todos os `Payment` e cheques compensados, e não restringe os pagamentos às operações visíveis. A leitura do código não prova que todo cheque compensado gere também um Payment, mas o modelo atual não demonstra uma chave de origem que permita eliminar duplicidade de forma confiável.
+3. **Compensação e fluxo de caixa são gravações separadas:** a baixa do cheque, atualização do saldo bancário, criação de `CashFlow` e sincronização da operação são chamadas distintas. Se uma falhar, pode haver estado parcial; reexecutar a ação também exige proteção contra crédito duplicado.
+4. **Campos de data precisam de semântica definida:** data de vencimento do título, data de compensação bancária e data de registro são fatos distintos e não devem ser intercambiados para vincular parcelas ou compor relatórios.
+5. **Correção segura requer contrato de dados:** antes de mudar a lógica, mapear como os cheques atuais representam vencimento, compensação, substituição e pagamento alternativo de cheque devolvido. A alteração não deve apagar histórico nem assumir que registros antigos estão completos.
+
+### Próxima correção proposta
+
+- Mapear os campos e os fluxos de criação/baixa/estorno de `Cheque`, `Payment`, `CashFlow` e `Banco`.
+- Definir um identificador estável para vincular título/parcela e uma referência de origem para cada movimento financeiro.
+- Preparar testes de compensação repetida, falha parcial, data de compensação diferente do vencimento, pagamento por PIX de cheque devolvido e consistência dos totais.
+- Só então alterar a rotina de compensação. A implementação atômica e a idempotência completas provavelmente exigem uma função backend; não devem ser simuladas por várias chamadas independentes no frontend.
+
+**Validação:** esta etapa foi uma auditoria estática do código no GitHub. Não foram executados build, lint, typecheck, testes automatizados nem testes contra dados reais.
