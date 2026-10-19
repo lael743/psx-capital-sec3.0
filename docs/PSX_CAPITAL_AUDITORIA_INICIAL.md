@@ -42,6 +42,13 @@
 1. `src/lib/finance.js` arredonda para cima a taxa diária percentual em `roundedDailyRatePercent`. Exemplo documentado: 4% ao mês vira 0,14% ao dia em vez de usar a proporção exata. Isso pode alterar valores; não será mudado sem confirmar a regra comercial/contratual.
 2. Os modos de cálculo de operação e parcelas devem ser comparados com contratos, títulos gerados e valores persistidos antes de consolidar um motor único.
 
+### P0/P1 — gravações financeiras não são atômicas
+
+1. `src/pages/OperacaoDetail.jsx`: o registro de pagamento cria `Payment` e depois atualiza `Operation.amount_paid`, `balance_due`, `status` e `realized_profit` em chamadas separadas. Se uma chamada falhar ou houver duas gravações concorrentes, pode haver divergência entre histórico de pagamentos e saldo da operação. O formulário também não mostra, no trecho auditado, uma validação explícita contra recebimento maior que o saldo devedor.
+2. `src/lib/syncCheque.js`: a conciliação de cheque reconstrói parcelas procurando cheque compensado pela igualdade de `compensation_date` e `due_date`. Duas parcelas com a mesma data, ou dois cheques na mesma data, podem ser associados incorretamente; o vínculo deve usar identificador estável da parcela/título, não apenas a data.
+3. `src/components/bancos/TransferenciaBancosModal.jsx`: a transferência atualiza saldo do banco de origem, depois o destino, e cria dois lançamentos `CashFlow` em operações separadas. Uma falha no meio pode deixar os saldos divergentes; além disso, as duas pernas internas aparecem como entrada e saída no fluxo bruto, devendo ser excluídas ou classificadas à parte em indicadores de receita/despesa operacional.
+4. O código de frontend invoca as funções `asaasCreateCharge`, `asaasGetPaymentStatus` e `asaasCancelCharge`, mas os arquivos dessas funções não foram encontrados no repositório nos caminhos convencionais. Não é possível confirmar idempotência, webhooks, validação de permissões ou persistência externa sem acessar o backend Base44 correspondente.
+
 ## Plano incremental
 
 1. **Mapeamento:** localizar funções backend e modelos/entidades; mapear todos os pontos de criação, edição, baixa, estorno, compensação e recebimento.
