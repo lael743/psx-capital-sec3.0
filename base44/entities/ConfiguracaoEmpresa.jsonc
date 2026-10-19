@@ -1,0 +1,135 @@
+{
+  "name": "ConfiguracaoEmpresa",
+  "type": "object",
+  "properties": {
+    "company_name": {
+      "type": "string"
+    },
+    "company_document": {
+      "type": "string"
+    },
+    "company_phone": {
+      "type": "string"
+    },
+    "company_email": {
+      "type": "string"
+    },
+    "company_address": {
+      "type": "string"
+    },
+    "company_city": {
+      "type": "string"
+    },
+    "company_state": {
+      "type": "string"
+    },
+    "company_zip": {
+      "type": "string"
+    },
+    "company_pix": {
+      "type": "string"
+    },
+    "company_bank": {
+      "type": "string"
+    },
+    "company_logo_url": {
+      "type": "string"
+    },
+    "contract_multa_pct": {
+      "type": "string"
+    },
+    "contract_mora_pct": {
+      "type": "string"
+    },
+    "contract_prazo_atraso": {
+      "type": "string"
+    },
+    "default_rate": {
+      "type": "string"
+    },
+    "default_interest_type": {
+      "type": "string",
+      "enum": [
+        "simples",
+        "composto"
+      ],
+      "default": "simples"
+    },
+    "default_installments": {
+      "type": "number",
+      "default": 1
+    },
+    "show_confirm_dialogs": {
+      "type": "boolean",
+      "default": true
+    },
+    "show_receipt_after_payment": {
+      "type": "boolean",
+      "default": true
+    },
+    "show_operation_confirm": {
+      "type": "boolean",
+      "default": true
+    },
+    "installment_mode_gradativo": {
+      "type": "boolean",
+      "default": false
+    },
+    "validate_cpf_cnpj": {
+      "type": "boolean",
+      "default": true
+    },
+    "block_over_limit": {
+      "type": "boolean",
+      "default": true
+    },
+    "calc_mode_padrao_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Ativar modo de c\u00e1lculo Padr\u00e3o"
+    },
+    "calc_mode_inverso_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Ativar modo de c\u00e1lculo Inverso (Juros Embutido)"
+    },
+    "calc_mode_desconto_direto_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Ativar modo de c\u00e1lculo Desconto Direto"
+    },
+    "calc_mode_juros_cedente_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Ativar modo de c\u00e1lculo Juros do Cedente"
+    },
+    "calc_mode_capital_desagio_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "Ativar modo de c\u00e1lculo Capital + Des\u00e1gio"
+    },
+    "arredondar_taxa_diaria": {
+      "type": "boolean",
+      "default": false,
+      "description": "Arredondar taxa di\u00e1ria para 2 casas decimais nos c\u00e1lculos"
+    },
+    "default_tarifa_operacao": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa padr\u00e3o da opera\u00e7\u00e3o (R$)"
+    },
+    "default_tarifa_por_titulo": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa padr\u00e3o por t\u00edtulo (R$)"
+    },
+    "default_float_dias": {
+      "type": "number",
+      "default": 0,
+      "description": "Float padr\u00e3o em dias"
+    }
+  },
+  "required": [
+    "company_name"
+  ]
+}

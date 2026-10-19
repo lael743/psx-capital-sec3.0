@@ -1,0 +1,372 @@
+{
+  "name": "Operation",
+  "type": "object",
+  "properties": {
+    "numero_operacao": {
+      "type": "number",
+      "description": "N\u00famero sequencial \u00fanico da opera\u00e7\u00e3o"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "ID do cliente (cedente/tomador). Opcional para empr\u00e9stimo sem cedente."
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Nome do cliente (sincronizado automaticamente)"
+    },
+    "sacado_id": {
+      "type": "string",
+      "description": "ID do sacado/pagador (para opera\u00e7\u00f5es de boleto)"
+    },
+    "sacado_name": {
+      "type": "string",
+      "description": "Nome do sacado/pagador"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "emprestimo",
+        "cheque",
+        "boleto",
+        "assinatura"
+      ],
+      "default": "emprestimo"
+    },
+    "produto": {
+      "type": "string",
+      "enum": [
+        "cheque",
+        "boleto",
+        "capital_desagio",
+        "assinatura"
+      ],
+      "description": "Produto da antecipa\u00e7\u00e3o de receb\u00edveis"
+    },
+    "produto_id": {
+      "type": "string",
+      "description": "ID do produto cadastrado (ProdutoOperacao)"
+    },
+    "etapa": {
+      "type": "string",
+      "enum": [
+        "rascunho",
+        "nova",
+        "analise_credito",
+        "confirmacao_titulos",
+        "formalizacao",
+        "assinatura",
+        "pagamento",
+        "finalizada",
+        "rejeitada"
+      ],
+      "default": "nova",
+      "description": "Etapa do workflow da opera\u00e7\u00e3o"
+    },
+    "gross_value": {
+      "type": "number",
+      "description": "Valor bruto"
+    },
+    "rate": {
+      "type": "number",
+      "description": "Taxa mensal aplicada em %"
+    },
+    "interest_type": {
+      "type": "string",
+      "enum": [
+        "simples",
+        "composto"
+      ],
+      "default": "simples"
+    },
+    "calc_mode": {
+      "type": "string",
+      "enum": [
+        "padrao",
+        "inverso",
+        "desconto_direto",
+        "juros_cedente",
+        "capital_desagio",
+        "assinatura"
+      ],
+      "default": "padrao",
+      "description": "Modo de c\u00e1lculo da opera\u00e7\u00e3o"
+    },
+    "calculo_inverso": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se a opera\u00e7\u00e3o usa c\u00e1lculo inverso (face = valor \u00f7 (1 \u2212 taxa \u00d7 dias/30))"
+    },
+    "start_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "days": {
+      "type": "number",
+      "description": "N\u00famero de dias da opera\u00e7\u00e3o"
+    },
+    "net_value": {
+      "type": "number",
+      "description": "Valor l\u00edquido liberado"
+    },
+    "valor_antecipacao": {
+      "type": "number",
+      "description": "Valor antecipado ao cedente (opera\u00e7\u00f5es de assinatura)"
+    },
+    "total_receivable": {
+      "type": "number",
+      "description": "Total a receber"
+    },
+    "capital_cost": {
+      "type": "number",
+      "description": "Custo de capital opcional"
+    },
+    "tarifa_operacao": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa fixa da opera\u00e7\u00e3o (R$)"
+    },
+    "tarifa_por_titulo": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa por t\u00edtulo (R$)"
+    },
+    "float_dias": {
+      "type": "number",
+      "default": 0,
+      "description": "Dias de float adicionados ao c\u00e1lculo"
+    },
+    "projected_profit": {
+      "type": "number",
+      "description": "Lucro projetado"
+    },
+    "realized_profit": {
+      "type": "number",
+      "description": "Lucro realizado"
+    },
+    "installments": {
+      "type": "number",
+      "default": 1,
+      "description": "N\u00famero de parcelas"
+    },
+    "installment_value": {
+      "type": "number",
+      "description": "Valor por parcela"
+    },
+    "installment_schedule": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Agenda de parcelas"
+    },
+    "amount_paid": {
+      "type": "number",
+      "default": 0
+    },
+    "balance_due": {
+      "type": "number",
+      "description": "Saldo devedor"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pendente_contrato",
+        "repasse_concluido",
+        "ativo",
+        "quitado",
+        "atrasado",
+        "inadimplente"
+      ],
+      "default": "ativo"
+    },
+    "notificacao_status": {
+      "type": "string",
+      "enum": [
+        "pendente",
+        "enviado",
+        "aceito"
+      ],
+      "description": "Status de notifica\u00e7\u00e3o ao devedor"
+    },
+    "days_overdue": {
+      "type": "number",
+      "default": 0
+    },
+    "overdue_probability": {
+      "type": "number",
+      "default": 0
+    },
+    "parent_operation_id": {
+      "type": "string",
+      "description": "Opera\u00e7\u00e3o m\u00e3e (renegocia\u00e7\u00e3o)"
+    },
+    "contract_url": {
+      "type": "string"
+    },
+    "signed_contract_url": {
+      "type": "string",
+      "description": "URL do contrato assinado anexado"
+    },
+    "contract_signed_confirmed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Contrato assinado foi confirmado"
+    },
+    "contract_signed_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de confirma\u00e7\u00e3o do contrato assinado"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "is_active": {
+      "type": "boolean",
+      "default": true
+    },
+    "repasse_bank_id": {
+      "type": "string",
+      "description": "ID do banco que far\u00e1 o repasse ao cliente"
+    },
+    "repasse_bank_name": {
+      "type": "string",
+      "description": "Nome do banco de repasse"
+    },
+    "lucro_bank_id": {
+      "type": "string",
+      "description": "ID do banco que receber\u00e1 o lucro"
+    },
+    "lucro_bank_name": {
+      "type": "string",
+      "description": "Nome do banco de lucro"
+    },
+    "assessor": {
+      "type": "string",
+      "description": "Nome do assessor de investimento"
+    },
+    "needs_contract": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se esta opera\u00e7\u00e3o necessita de contrato assinado"
+    },
+    "contract_notes": {
+      "type": "string",
+      "description": "Observa\u00e7\u00f5es sobre o contrato"
+    },
+    "disbursement_method": {
+      "type": "string",
+      "description": "Forma de desembolso ao cliente"
+    },
+    "cheques_status": {
+      "type": "string",
+      "enum": [
+        "em_maos",
+        "pendente_buscar",
+        "tesouraria"
+      ],
+      "description": "Status dos cheques desta opera\u00e7\u00e3o"
+    },
+    "cheques_notes": {
+      "type": "string",
+      "description": "Observa\u00e7\u00f5es sobre os cheques"
+    },
+    "details_completed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se a etapa de detalhes adicionais foi preenchida"
+    },
+    "payment_executed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se o pagamento/repasse foi executado ao cliente"
+    },
+    "payment_execution_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de execu\u00e7\u00e3o do pagamento"
+    },
+    "disbursement_bank_id": {
+      "type": "string",
+      "description": "ID do banco de repasse (usado na execu\u00e7\u00e3o)"
+    },
+    "disbursement_bank_name": {
+      "type": "string",
+      "description": "Nome do banco de repasse (usado na execu\u00e7\u00e3o)"
+    },
+    "assinatura_ciclo": {
+      "type": "string",
+      "enum": [
+        "DAILY",
+        "WEEKLY",
+        "BIWEEKLY",
+        "MONTHLY",
+        "QUARTERLY",
+        "SEMIANNUALLY",
+        "YEARLY"
+      ],
+      "default": "MONTHLY",
+      "description": "Ciclo de cobran\u00e7a da assinatura (Asaas)"
+    },
+    "assinatura_prazo_tipo": {
+      "type": "string",
+      "enum": [
+        "definido",
+        "indefinido"
+      ],
+      "default": "indefinido",
+      "description": "Tipo de prazo da assinatura"
+    },
+    "assinatura_num_ciclos": {
+      "type": "number",
+      "default": 0,
+      "description": "N\u00famero total de ciclos (quando prazo definido)"
+    },
+    "asaas_payment_id": {
+      "type": "string",
+      "description": "ID da cobran\u00e7a no Asaas (pay_xxx)"
+    },
+    "asaas_billing_type": {
+      "type": "string",
+      "enum": [
+        "PIX",
+        "BOLETO",
+        "CREDIT_CARD"
+      ],
+      "description": "M\u00e9todo de cobran\u00e7a Asaas"
+    },
+    "asaas_invoice_url": {
+      "type": "string",
+      "description": "URL da fatura Asaas"
+    },
+    "asaas_pix_qrcode": {
+      "type": "string",
+      "description": "Payload do QR Code PIX (copia e cola)"
+    },
+    "asaas_boleto_line": {
+      "type": "string",
+      "description": "Linha digit\u00e1vel do boleto"
+    },
+    "asaas_payment_status": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "confirmed",
+        "received",
+        "overdue",
+        "refunded",
+        "deleted"
+      ],
+      "description": "Status da cobran\u00e7a no Asaas"
+    }
+  },
+  "required": [
+    "gross_value",
+    "rate",
+    "start_date",
+    "due_date"
+  ]
+}

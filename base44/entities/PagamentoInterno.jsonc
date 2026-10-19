@@ -1,0 +1,66 @@
+{
+  "name": "PagamentoInterno",
+  "type": "object",
+  "properties": {
+    "obrigacao_id": {
+      "type": "string"
+    },
+    "lancamento_id": {
+      "type": "string"
+    },
+    "descricao": {
+      "type": "string",
+      "description": "Descri\u00e7\u00e3o da obriga\u00e7\u00e3o paga (cache)"
+    },
+    "valor_pago": {
+      "type": "number"
+    },
+    "data_pagamento": {
+      "type": "string",
+      "format": "date"
+    },
+    "conta_id": {
+      "type": "string",
+      "description": "Conta de origem do pagamento"
+    },
+    "conta_nome": {
+      "type": "string"
+    },
+    "forma_pagamento": {
+      "type": "string"
+    },
+    "referencia": {
+      "type": "string",
+      "description": "Identificador ou refer\u00eancia do pagamento"
+    },
+    "comprovante_url": {
+      "type": "string"
+    },
+    "observacao": {
+      "type": "string"
+    },
+    "estornado": {
+      "type": "boolean",
+      "default": false
+    },
+    "estorno_motivo": {
+      "type": "string"
+    },
+    "estorno_data": {
+      "type": "string"
+    },
+    "cashflow_id": {
+      "type": "string",
+      "description": "ID do CashFlow gerado no fluxo financeiro central"
+    },
+    "idempotency_key": {
+      "type": "string",
+      "description": "Chave de idempot\u00eancia para impedir pagamentos duplicados"
+    }
+  },
+  "required": [
+    "obrigacao_id",
+    "valor_pago",
+    "data_pagamento"
+  ]
+}

@@ -1,0 +1,61 @@
+{
+  "name": "ClienteOnboarding",
+  "type": "object",
+  "properties": {
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "cedente",
+        "sacado"
+      ],
+      "description": "Tipo de cliente para onboarding"
+    },
+    "token": {
+      "type": "string",
+      "description": "Token unico do link publico"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pendente",
+        "preenchido",
+        "expirado"
+      ],
+      "default": "pendente",
+      "description": "Status do link de onboarding"
+    },
+    "created_by_name": {
+      "type": "string",
+      "description": "Nome do operador que criou o link"
+    },
+    "expires_at": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de expiracao do link (opcional)"
+    },
+    "filled_at": {
+      "type": "string",
+      "description": "Data/hora de preenchimento (ISO 8600)"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "ID do cliente/sacado criado apos preenchimento"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Nome do cliente (cache)"
+    },
+    "document": {
+      "type": "string",
+      "description": "CPF/CNPJ do cliente (cache)"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Observacoes do operador"
+    }
+  },
+  "required": [
+    "tipo",
+    "token"
+  ]
+}

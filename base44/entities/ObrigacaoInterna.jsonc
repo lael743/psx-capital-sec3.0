@@ -1,0 +1,86 @@
+{
+  "name": "ObrigacaoInterna",
+  "type": "object",
+  "properties": {
+    "lancamento_id": {
+      "type": "string"
+    },
+    "descricao": {
+      "type": "string"
+    },
+    "categoria_id": {
+      "type": "string"
+    },
+    "categoria_nome": {
+      "type": "string"
+    },
+    "valor": {
+      "type": "number",
+      "description": "Valor devido da parcela"
+    },
+    "numero_parcela": {
+      "type": "number",
+      "default": 1
+    },
+    "total_parcelas": {
+      "type": "number",
+      "default": 1
+    },
+    "vencimento": {
+      "type": "string",
+      "format": "date"
+    },
+    "data_pagamento": {
+      "type": "string",
+      "format": "date",
+      "description": "Data do \u00faltimo pagamento registrado"
+    },
+    "conta_pagamento_id": {
+      "type": "string"
+    },
+    "conta_pagamento_nome": {
+      "type": "string"
+    },
+    "valor_pago": {
+      "type": "number",
+      "default": 0
+    },
+    "saldo": {
+      "type": "number",
+      "description": "Saldo pendente da parcela"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "a_vencer",
+        "vencido",
+        "parcialmente_pago",
+        "pago",
+        "cancelado"
+      ],
+      "default": "a_vencer"
+    },
+    "comprovante_url": {
+      "type": "string"
+    },
+    "observacoes": {
+      "type": "string"
+    },
+    "motivo_cancelamento": {
+      "type": "string"
+    },
+    "cancelado_por": {
+      "type": "string"
+    },
+    "antecipada": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "lancamento_id",
+    "descricao",
+    "valor",
+    "vencimento"
+  ]
+}

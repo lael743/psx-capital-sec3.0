@@ -1,0 +1,84 @@
+{
+  "name": "ProdutoOperacao",
+  "type": "object",
+  "properties": {
+    "nome": {
+      "type": "string",
+      "description": "Nome do produto de opera\u00e7\u00e3o"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "cheque",
+        "boleto",
+        "emprestimo",
+        "assinatura"
+      ],
+      "default": "cheque",
+      "description": "Tipo base do produto (define o tipo da opera\u00e7\u00e3o)"
+    },
+    "calc_mode": {
+      "type": "string",
+      "enum": [
+        "padrao",
+        "inverso",
+        "desconto_direto",
+        "assinatura"
+      ],
+      "default": "inverso",
+      "description": "Formato de c\u00e1lculo: Padr\u00e3o, Juros Embutido (Inverso), Desconto Direto ou Assinatura"
+    },
+    "calculo_inverso": {
+      "type": "boolean",
+      "default": true,
+      "description": "Aplicar c\u00e1lculo inverso (valor \u00f7 (1 \u2212 taxa \u00d7 dias/30)): somar o des\u00e1gio ao valor de face. Predefini\u00e7\u00e3o aplicada automaticamente ao selecionar o produto."
+    },
+    "descricao": {
+      "type": "string",
+      "description": "Descri\u00e7\u00e3o exibida no seletor de produtos"
+    },
+    "default_rate": {
+      "type": "number",
+      "default": 0,
+      "description": "Taxa padr\u00e3o de des\u00e1gio a.m. (%)"
+    },
+    "default_interest_type": {
+      "type": "string",
+      "enum": [
+        "simples",
+        "composto"
+      ],
+      "default": "simples"
+    },
+    "default_tarifa_operacao": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa padr\u00e3o da opera\u00e7\u00e3o (R$)"
+    },
+    "default_tarifa_por_titulo": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa padr\u00e3o por t\u00edtulo (R$)"
+    },
+    "default_float_dias": {
+      "type": "number",
+      "default": 0,
+      "description": "Float padr\u00e3o em dias"
+    },
+    "ativo": {
+      "type": "boolean",
+      "default": true,
+      "description": "Produto ativo para sele\u00e7\u00e3o em novas opera\u00e7\u00f5es"
+    },
+    "ordem": {
+      "type": "number",
+      "default": 0,
+      "description": "Ordem de exibi\u00e7\u00e3o no seletor"
+    }
+  },
+  "required": [
+    "nome",
+    "tipo",
+    "calc_mode"
+  ]
+}

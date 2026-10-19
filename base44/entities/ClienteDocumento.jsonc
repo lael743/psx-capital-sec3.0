@@ -1,0 +1,51 @@
+{
+  "name": "ClienteDocumento",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "file_name": {
+      "type": "string"
+    },
+    "file_url": {
+      "type": "string"
+    },
+    "file_type": {
+      "type": "string",
+      "description": "MIME type do arquivo"
+    },
+    "file_size": {
+      "type": "number",
+      "description": "Tamanho em bytes"
+    },
+    "doc_category": {
+      "type": "string",
+      "enum": [
+        "identidade",
+        "comprovante_residencia",
+        "comprovante_renda",
+        "contrato",
+        "nota_promissoria",
+        "cheque_foto",
+        "outro"
+      ],
+      "default": "outro"
+    },
+    "description": {
+      "type": "string"
+    },
+    "uploaded_by": {
+      "type": "string",
+      "description": "Email de quem fez upload"
+    }
+  },
+  "required": [
+    "client_id",
+    "file_url",
+    "file_name"
+  ]
+}

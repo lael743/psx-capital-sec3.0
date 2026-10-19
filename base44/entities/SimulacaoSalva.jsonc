@@ -1,0 +1,28 @@
+{
+  "name": "SimulacaoSalva",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome da simula\u00e7\u00e3o"
+    },
+    "scenarios": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "Cen\u00e1rios da simula\u00e7\u00e3o"
+    },
+    "linked_client_id": {
+      "type": "string",
+      "description": "ID do cliente vinculado (opcional)"
+    },
+    "linked_client_name": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "scenarios"
+  ]
+}

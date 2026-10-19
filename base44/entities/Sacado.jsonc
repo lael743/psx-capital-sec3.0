@@ -1,0 +1,81 @@
+{
+  "name": "Sacado",
+  "type": "object",
+  "properties": {
+    "nome": {
+      "type": "string",
+      "description": "Nome completo ou raz\u00e3o social do sacado"
+    },
+    "document": {
+      "type": "string",
+      "description": "CPF ou CNPJ do sacado"
+    },
+    "document_type": {
+      "type": "string",
+      "enum": [
+        "CPF",
+        "CNPJ"
+      ],
+      "default": "CPF"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Telefone"
+    },
+    "email": {
+      "type": "string",
+      "description": "E-mail"
+    },
+    "address": {
+      "type": "string",
+      "description": "Endere\u00e7o completo"
+    },
+    "city": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "zip_code": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ativo",
+        "inativo",
+        "risco"
+      ],
+      "default": "ativo"
+    },
+    "cedente_id": {
+      "type": "string",
+      "description": "ID do cedente vinculado (opcional)"
+    },
+    "origem": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "automatico"
+      ],
+      "default": "manual",
+      "description": "Origem do cadastro (manual ou auto-cadastrado via opera\u00e7\u00e3o)"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "asaas_customer_id": {
+      "type": "string",
+      "description": "ID do cliente no Asaas (cus_xxx)"
+    },
+    "asaas_synced_at": {
+      "type": "string",
+      "format": "date",
+      "description": "Data da \u00faltima sincroniza\u00e7\u00e3o com Asaas"
+    }
+  },
+  "required": [
+    "nome",
+    "document"
+  ]
+}

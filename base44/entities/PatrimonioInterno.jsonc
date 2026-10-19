@@ -1,0 +1,105 @@
+{
+  "name": "PatrimonioInterno",
+  "type": "object",
+  "properties": {
+    "nome": {
+      "type": "string"
+    },
+    "categoria_id": {
+      "type": "string"
+    },
+    "categoria_nome": {
+      "type": "string"
+    },
+    "data_aquisicao": {
+      "type": "string",
+      "format": "date"
+    },
+    "quantidade": {
+      "type": "number",
+      "default": 1
+    },
+    "valor_unitario": {
+      "type": "number"
+    },
+    "valor_total": {
+      "type": "number"
+    },
+    "fornecedor": {
+      "type": "string",
+      "description": "Fornecedor ou origem da aquisi\u00e7\u00e3o"
+    },
+    "vida_util_meses": {
+      "type": "number",
+      "description": "Vida \u00fatil estimada em meses"
+    },
+    "valor_residual": {
+      "type": "number",
+      "default": 0
+    },
+    "responsavel": {
+      "type": "string"
+    },
+    "localizacao": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ativo",
+        "em_manutencao",
+        "baixado",
+        "vendido"
+      ],
+      "default": "ativo"
+    },
+    "observacoes": {
+      "type": "string"
+    },
+    "documento_url": {
+      "type": "string",
+      "description": "Documento ou nota fiscal"
+    },
+    "documento_nome": {
+      "type": "string"
+    },
+    "lancamento_id": {
+      "type": "string",
+      "description": "Lan\u00e7amento de aquisi\u00e7\u00e3o vinculado"
+    },
+    "baixa_data": {
+      "type": "string",
+      "format": "date"
+    },
+    "baixa_motivo": {
+      "type": "string"
+    },
+    "baixa_valor": {
+      "type": "number"
+    },
+    "historico": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "usuario": {
+            "type": "string"
+          },
+          "acao": {
+            "type": "string"
+          },
+          "descricao": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  },
+  "required": [
+    "nome",
+    "valor_total"
+  ]
+}

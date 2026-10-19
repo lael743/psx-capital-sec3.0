@@ -1,0 +1,56 @@
+{
+  "name": "ContaInterna",
+  "type": "object",
+  "properties": {
+    "nome": {
+      "type": "string",
+      "description": "Nome da conta ou meio de pagamento"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "conta_bancaria",
+        "caixa",
+        "cartao_credito",
+        "outro"
+      ],
+      "default": "caixa",
+      "description": "Tipo da conta/meio"
+    },
+    "banco_id": {
+      "type": "string",
+      "description": "ID do Banco do m\u00f3dulo financeiro (apenas conta banc\u00e1ria)"
+    },
+    "banco_nome": {
+      "type": "string",
+      "description": "Nome do banco (cache)"
+    },
+    "saldo_inicial": {
+      "type": "number",
+      "default": 0
+    },
+    "limite": {
+      "type": "number",
+      "description": "Limite do cart\u00e3o de cr\u00e9dito (opcional)"
+    },
+    "dia_fechamento": {
+      "type": "number",
+      "description": "Dia de fechamento da fatura (cart\u00e3o)"
+    },
+    "dia_vencimento": {
+      "type": "number",
+      "description": "Dia de vencimento da fatura (cart\u00e3o)"
+    },
+    "ativo": {
+      "type": "boolean",
+      "default": true
+    },
+    "observacoes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "nome",
+    "tipo"
+  ]
+}

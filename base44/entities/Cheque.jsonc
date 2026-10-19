@@ -1,0 +1,151 @@
+{
+  "name": "Cheque",
+  "type": "object",
+  "properties": {
+    "operation_id": {
+      "type": "string"
+    },
+    "client_id": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "sacado_name": {
+      "type": "string",
+      "description": "Nome do sacado/pagador do t\u00edtulo"
+    },
+    "sacado_doc": {
+      "type": "string",
+      "description": "CPF/CNPJ do sacado"
+    },
+    "nf": {
+      "type": "string",
+      "description": "Nota fiscal vinculada"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "cheque",
+        "boleto",
+        "duplicata"
+      ],
+      "description": "Tipo do t\u00edtulo"
+    },
+    "bank_name": {
+      "type": "string",
+      "description": "Nome do banco ou cooperativa (emissor)"
+    },
+    "bank_code": {
+      "type": "string",
+      "description": "C\u00f3digo/n\u00famero do banco (ex: 756, 237)"
+    },
+    "bank_agency": {
+      "type": "string",
+      "description": "N\u00famero da ag\u00eancia ou cooperativa"
+    },
+    "bank_account": {
+      "type": "string",
+      "description": "N\u00famero da conta corrente"
+    },
+    "check_number": {
+      "type": "string",
+      "description": "N\u00famero do cheque/t\u00edtulo"
+    },
+    "value": {
+      "type": "number"
+    },
+    "valor_face": {
+      "type": "number",
+      "description": "Valor de face (nominal) do t\u00edtulo"
+    },
+    "desagio": {
+      "type": "number",
+      "description": "Des\u00e1gio calculado do t\u00edtulo"
+    },
+    "liquido": {
+      "type": "number",
+      "description": "Valor l\u00edquido do t\u00edtulo"
+    },
+    "outras_despesas": {
+      "type": "number",
+      "default": 0,
+      "description": "Outras despesas do t\u00edtulo"
+    },
+    "dias": {
+      "type": "number",
+      "description": "Dias calculados at\u00e9 o vencimento"
+    },
+    "issue_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de emiss\u00e3o do cheque"
+    },
+    "compensation_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pendente",
+        "compensado",
+        "devolvido",
+        "resolvido_pago",
+        "resolvido_substituido",
+        "resolvido_prorrogado",
+        "cancelado"
+      ],
+      "default": "pendente",
+      "description": "Status do t\u00edtulo (cancelado quando a opera\u00e7\u00e3o vinculada \u00e9 rejeitada/cancelada)"
+    },
+    "custody_status": {
+      "type": "string",
+      "enum": [
+        "em_maos",
+        "a_buscar",
+        "tesouraria",
+        "financeiro"
+      ],
+      "default": "em_maos",
+      "description": "Status de cust\u00f3dia/localiza\u00e7\u00e3o f\u00edsica do cheque"
+    },
+    "deposited_bank_id": {
+      "type": "string",
+      "description": "ID do banco da empresa onde o cheque foi depositado"
+    },
+    "deposited_bank_name": {
+      "type": "string",
+      "description": "Nome do banco da empresa onde o cheque foi depositado"
+    },
+    "return_reason": {
+      "type": "string",
+      "description": "Motivo de devolu\u00e7\u00e3o"
+    },
+    "resubmitted": {
+      "type": "boolean",
+      "default": false
+    },
+    "resubmit_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "front_image_url": {
+      "type": "string"
+    },
+    "back_image_url": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation_id",
+    "client_id",
+    "bank_name",
+    "check_number",
+    "value",
+    "compensation_date"
+  ]
+}

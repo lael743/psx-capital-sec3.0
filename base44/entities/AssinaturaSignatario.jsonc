@@ -1,0 +1,57 @@
+{
+  "name": "AssinaturaSignatario",
+  "type": "object",
+  "properties": {
+    "document_id": {
+      "type": "string",
+      "description": "ID do documento vinculado"
+    },
+    "document_title": {
+      "type": "string",
+      "description": "T\u00edtulo do documento (sincronizado)"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nome completo do signat\u00e1rio"
+    },
+    "cpf_cnpj": {
+      "type": "string",
+      "description": "CPF ou CNPJ"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Telefone/WhatsApp"
+    },
+    "email": {
+      "type": "string",
+      "description": "E-mail"
+    },
+    "role": {
+      "type": "string",
+      "description": "Fun\u00e7\u00e3o/papel do signat\u00e1rio (ex: Sacador/Avalista, Cedente, Testemunha)"
+    },
+    "birth_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de nascimento"
+    },
+    "address": {
+      "type": "string",
+      "description": "Endere\u00e7o completo"
+    },
+    "city": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "zip_code": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "document_id",
+    "name",
+    "cpf_cnpj"
+  ]
+}

@@ -1,0 +1,64 @@
+{
+  "name": "ContactHistory",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "operation_id": {
+      "type": "string"
+    },
+    "channel": {
+      "type": "string",
+      "enum": [
+        "whatsapp",
+        "telefone",
+        "email",
+        "presencial",
+        "outro"
+      ],
+      "default": "whatsapp"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "cobranca",
+        "contrato",
+        "vencimento",
+        "negociacao",
+        "outro"
+      ],
+      "default": "cobranca"
+    },
+    "message": {
+      "type": "string"
+    },
+    "response": {
+      "type": "string"
+    },
+    "contact_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "sem_resposta",
+        "promessa_pagamento",
+        "negociando",
+        "recusou",
+        "pago"
+      ],
+      "default": "sem_resposta"
+    }
+  },
+  "required": [
+    "client_id",
+    "channel",
+    "type",
+    "contact_date"
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "name": "AssinaturaVinculo",
+  "type": "object",
+  "properties": {
+    "operation_id": {
+      "type": "string",
+      "description": "ID da opera\u00e7\u00e3o de assinatura vinculada"
+    },
+    "sacado_id": {
+      "type": "string",
+      "description": "ID do sacado/assinante"
+    },
+    "sacado_name": {
+      "type": "string",
+      "description": "Nome do sacado (sincronizado)"
+    },
+    "sacado_doc": {
+      "type": "string",
+      "description": "CPF/CNPJ do sacado"
+    },
+    "valor_assinatura": {
+      "type": "number",
+      "description": "Valor da assinatura por ciclo (R$)"
+    },
+    "ciclo": {
+      "type": "string",
+      "enum": [
+        "DAILY",
+        "WEEKLY",
+        "BIWEEKLY",
+        "MONTHLY",
+        "QUARTERLY",
+        "SEMIANNUALLY",
+        "YEARLY"
+      ],
+      "default": "MONTHLY",
+      "description": "Ciclo de cobran\u00e7a Asaas"
+    },
+    "billing_type": {
+      "type": "string",
+      "enum": [
+        "PIX",
+        "BOLETO",
+        "CREDIT_CARD"
+      ],
+      "default": "BOLETO",
+      "description": "M\u00e9todo de cobran\u00e7a Asaas"
+    },
+    "prazo_tipo": {
+      "type": "string",
+      "enum": [
+        "definido",
+        "indefinido"
+      ],
+      "default": "indefinido",
+      "description": "Tipo de prazo da assinatura"
+    },
+    "num_ciclos": {
+      "type": "number",
+      "default": 0,
+      "description": "N\u00famero total de ciclos (quando prazo definido)"
+    },
+    "ciclos_pagos": {
+      "type": "number",
+      "default": 0,
+      "description": "Ciclos j\u00e1 pagos pelo sacado"
+    },
+    "asaas_subscription_id": {
+      "type": "string",
+      "description": "ID da assinatura no Asaas (sub_xxx)"
+    },
+    "asaas_customer_id": {
+      "type": "string",
+      "description": "ID do customer no Asaas vinculado a esta assinatura"
+    },
+    "asaas_status": {
+      "type": "string",
+      "enum": [
+        "ACTIVE",
+        "EXPIRED",
+        "DELETED",
+        "PENDING"
+      ],
+      "description": "Status da assinatura no Asaas"
+    },
+    "proxima_cobranca": {
+      "type": "string",
+      "format": "date",
+      "description": "Pr\u00f3xima data de cobran\u00e7a"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ativa",
+        "cancelada",
+        "encerrada"
+      ],
+      "default": "ativa",
+      "description": "Status local do v\u00ednculo"
+    },
+    "notas": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "operation_id",
+    "sacado_name",
+    "sacado_doc",
+    "valor_assinatura",
+    "ciclo",
+    "billing_type"
+  ]
+}

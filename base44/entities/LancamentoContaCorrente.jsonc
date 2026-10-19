@@ -1,0 +1,165 @@
+{
+  "name": "LancamentoContaCorrente",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string",
+      "enum": [
+        "antecipacao",
+        "emprestimo",
+        "cheque",
+        "boleto",
+        "parcela",
+        "pagamento_dinheiro",
+        "pagamento_pix",
+        "pagamento_transferencia",
+        "pagamento_cartao",
+        "baixa_manual",
+        "ajuste_saldo",
+        "estorno",
+        "desconto",
+        "acrescimo",
+        "taxa",
+        "limite_rotativo"
+      ]
+    },
+    "nature": {
+      "type": "string",
+      "enum": [
+        "debito",
+        "credito"
+      ]
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "description": {
+      "type": "string"
+    },
+    "gross_value": {
+      "type": "number"
+    },
+    "rate": {
+      "type": "number",
+      "description": "Taxa mensal em % aplicada na corre\u00e7\u00e3o"
+    },
+    "interest_type": {
+      "type": "string",
+      "enum": [
+        "simples",
+        "composto",
+        "proporcional_dias"
+      ],
+      "default": "composto"
+    },
+    "due_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "days_calculated": {
+      "type": "number"
+    },
+    "corrected_value": {
+      "type": "number",
+      "description": "Valor corrigido conforme taxa e prazo"
+    },
+    "net_value": {
+      "type": "number",
+      "description": "Valor l\u00edquido ap\u00f3s taxas"
+    },
+    "debit_amount": {
+      "type": "number",
+      "description": "Valor do d\u00e9bito aplicado"
+    },
+    "credit_amount": {
+      "type": "number",
+      "description": "Valor do cr\u00e9dito aplicado"
+    },
+    "balance_after": {
+      "type": "number",
+      "description": "Saldo do cliente ap\u00f3s este lan\u00e7amento"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "em_aberto",
+        "parcialmente_baixado",
+        "baixado",
+        "compensado",
+        "vencido",
+        "cancelado"
+      ],
+      "default": "em_aberto"
+    },
+    "operation_id": {
+      "type": "string"
+    },
+    "cheque_id": {
+      "type": "string"
+    },
+    "boleto_id": {
+      "type": "string"
+    },
+    "parcela_id": {
+      "type": "string"
+    },
+    "limite_rotativo_id": {
+      "type": "string",
+      "description": "ID do limite rotativo vinculado"
+    },
+    "repasse_id": {
+      "type": "string",
+      "description": "ID do repasse de limite rotativo vinculado"
+    },
+    "payment_method": {
+      "type": "string",
+      "enum": [
+        "dinheiro",
+        "pix",
+        "transferencia",
+        "cheque",
+        "boleto",
+        "cartao",
+        "outro"
+      ]
+    },
+    "notes": {
+      "type": "string"
+    },
+    "document_url": {
+      "type": "string"
+    },
+    "amortized_by_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs de lan\u00e7amentos que amortizaram este"
+    },
+    "amortization_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "IDs de lan\u00e7amentos que este amortizou"
+    },
+    "amortized_amount": {
+      "type": "number",
+      "description": "Valor j\u00e1 amortizado deste lan\u00e7amento"
+    }
+  },
+  "required": [
+    "client_id",
+    "type",
+    "nature",
+    "date",
+    "gross_value"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "name": "PaymentMethod",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome do meio de pagamento (ex: PIX, Dinheiro, Boleto)"
+    },
+    "icon": {
+      "type": "string",
+      "description": "\u00cdcone ou emoji representativo"
+    },
+    "active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

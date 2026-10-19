@@ -1,0 +1,47 @@
+{
+  "name": "CategoriaInterna",
+  "type": "object",
+  "properties": {
+    "nome": {
+      "type": "string",
+      "description": "Nome da categoria"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "despesa",
+        "patrimonio"
+      ],
+      "default": "despesa",
+      "description": "Aplica\u00e7\u00e3o da categoria"
+    },
+    "parent_id": {
+      "type": "string",
+      "description": "ID da categoria pai (quando for subcategoria)"
+    },
+    "parent_nome": {
+      "type": "string",
+      "description": "Nome da categoria pai (cache)"
+    },
+    "ativo": {
+      "type": "boolean",
+      "default": true
+    },
+    "ordem": {
+      "type": "number",
+      "default": 0
+    },
+    "sistema": {
+      "type": "boolean",
+      "default": false,
+      "description": "Categoria padr\u00e3o do sistema"
+    },
+    "observacoes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "nome",
+    "tipo"
+  ]
+}

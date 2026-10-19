@@ -1,0 +1,100 @@
+{
+  "name": "AssinaturaDigital",
+  "type": "object",
+  "properties": {
+    "document_id": {
+      "type": "string"
+    },
+    "signer_id": {
+      "type": "string"
+    },
+    "signature_image": {
+      "type": "string",
+      "description": "Imagem da assinatura (base64 ou URL)"
+    },
+    "selfie_image": {
+      "type": "string",
+      "description": "Selfie do signat\u00e1rio (base64 ou URL)"
+    },
+    "signed_at": {
+      "type": "string",
+      "description": "Data/hora da assinatura (ISO 8601)"
+    },
+    "ip_address": {
+      "type": "string"
+    },
+    "user_agent": {
+      "type": "string"
+    },
+    "device_type": {
+      "type": "string",
+      "description": "desktop, tablet, mobile"
+    },
+    "browser": {
+      "type": "string"
+    },
+    "operating_system": {
+      "type": "string"
+    },
+    "screen_resolution": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string"
+    },
+    "latitude": {
+      "type": "string"
+    },
+    "longitude": {
+      "type": "string"
+    },
+    "gps_accuracy": {
+      "type": "string"
+    },
+    "otp_code": {
+      "type": "string",
+      "description": "C\u00f3digo OTP de 6 d\u00edgitos"
+    },
+    "otp_generated_at": {
+      "type": "string",
+      "description": "Data/hora de gera\u00e7\u00e3o do OTP"
+    },
+    "otp_validated": {
+      "type": "boolean",
+      "default": false
+    },
+    "otp_validated_at": {
+      "type": "string"
+    },
+    "otp_attempts": {
+      "type": "number",
+      "default": 0
+    },
+    "document_hash_at_signature": {
+      "type": "string",
+      "description": "Hash SHA-256 do documento no momento da assinatura"
+    },
+    "public_link": {
+      "type": "string",
+      "description": "UUID p\u00fablico \u00fanico da assinatura"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pendente",
+        "concluido",
+        "expirado",
+        "recusado"
+      ],
+      "default": "pendente"
+    },
+    "certificate_pdf": {
+      "type": "string",
+      "description": "URL do PDF do certificado de evid\u00eancias"
+    }
+  },
+  "required": [
+    "document_id",
+    "signer_id"
+  ]
+}

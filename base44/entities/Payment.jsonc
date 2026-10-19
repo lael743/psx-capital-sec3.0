@@ -1,0 +1,50 @@
+{
+  "name": "Payment",
+  "type": "object",
+  "properties": {
+    "operation_id": {
+      "type": "string"
+    },
+    "client_id": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "amount": {
+      "type": "number"
+    },
+    "payment_date": {
+      "type": "string",
+      "format": "date"
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "pix",
+        "dinheiro",
+        "transferencia",
+        "cheque"
+      ],
+      "default": "pix"
+    },
+    "installment_ref": {
+      "type": "number",
+      "description": "N\u00famero da parcela (se aplic\u00e1vel)"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "is_partial": {
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "required": [
+    "operation_id",
+    "client_id",
+    "amount",
+    "payment_date",
+    "method"
+  ]
+}

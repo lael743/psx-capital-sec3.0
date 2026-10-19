@@ -1,0 +1,44 @@
+{
+  "name": "AuditLog",
+  "type": "object",
+  "properties": {
+    "user_email": {
+      "type": "string"
+    },
+    "user_name": {
+      "type": "string"
+    },
+    "action": {
+      "type": "string",
+      "description": "A\u00e7\u00e3o realizada (create, update, view, etc)"
+    },
+    "entity": {
+      "type": "string",
+      "description": "Entidade afetada"
+    },
+    "entity_id": {
+      "type": "string"
+    },
+    "description": {
+      "type": "string",
+      "description": "Descri\u00e7\u00e3o leg\u00edvel da a\u00e7\u00e3o"
+    },
+    "before": {
+      "type": "object",
+      "description": "Estado anterior"
+    },
+    "after": {
+      "type": "object",
+      "description": "Estado posterior"
+    },
+    "ip_address": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "user_email",
+    "action",
+    "entity",
+    "description"
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "name": "Banco",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome do banco ou institui\u00e7\u00e3o financeira"
+    },
+    "bank_code": {
+      "type": "string",
+      "description": "C\u00f3digo do banco (ex: 756, 237)"
+    },
+    "agency": {
+      "type": "string",
+      "description": "N\u00famero da ag\u00eancia"
+    },
+    "account": {
+      "type": "string",
+      "description": "N\u00famero da conta"
+    },
+    "account_type": {
+      "type": "string",
+      "enum": [
+        "corrente",
+        "poupanca",
+        "pagamento"
+      ],
+      "default": "corrente"
+    },
+    "pix_key": {
+      "type": "string"
+    },
+    "initial_balance": {
+      "type": "number",
+      "default": 0,
+      "description": "Saldo inicial cadastrado"
+    },
+    "current_balance": {
+      "type": "number",
+      "default": 0,
+      "description": "Saldo atual calculado"
+    },
+    "is_default_repasse": {
+      "type": "boolean",
+      "default": false,
+      "description": "Banco padr\u00e3o para repasse ao cliente"
+    },
+    "is_default_lucro": {
+      "type": "boolean",
+      "default": false,
+      "description": "Banco padr\u00e3o para recebimento de lucro"
+    },
+    "color": {
+      "type": "string",
+      "description": "Cor de identifica\u00e7\u00e3o visual (hex)"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "active": {
+      "type": "boolean",
+      "default": true
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

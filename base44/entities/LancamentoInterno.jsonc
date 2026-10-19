@@ -1,0 +1,100 @@
+{
+  "name": "LancamentoInterno",
+  "type": "object",
+  "properties": {
+    "data_lancamento": {
+      "type": "string",
+      "format": "date"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "despesa",
+        "patrimonio"
+      ],
+      "default": "despesa"
+    },
+    "categoria_id": {
+      "type": "string"
+    },
+    "categoria_nome": {
+      "type": "string"
+    },
+    "subcategoria_id": {
+      "type": "string"
+    },
+    "subcategoria_nome": {
+      "type": "string"
+    },
+    "descricao": {
+      "type": "string"
+    },
+    "valor_total": {
+      "type": "number"
+    },
+    "forma_pagamento": {
+      "type": "string",
+      "description": "Meio de pagamento (pix, boleto, cartao_credito, ...)"
+    },
+    "conta_id": {
+      "type": "string",
+      "description": "Conta utilizada ou prevista"
+    },
+    "conta_nome": {
+      "type": "string"
+    },
+    "condicao": {
+      "type": "string",
+      "enum": [
+        "a_vista",
+        "parcelado"
+      ],
+      "default": "a_vista"
+    },
+    "num_parcelas": {
+      "type": "number",
+      "default": 1
+    },
+    "primeiro_vencimento": {
+      "type": "string",
+      "format": "date"
+    },
+    "anexos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      },
+      "description": "Anexos e comprovantes do lan\u00e7amento"
+    },
+    "observacoes": {
+      "type": "string"
+    },
+    "patrimonio_id": {
+      "type": "string",
+      "description": "ID do bem criado a partir deste lan\u00e7amento"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ativo",
+        "pago",
+        "cancelado"
+      ],
+      "default": "ativo"
+    }
+  },
+  "required": [
+    "data_lancamento",
+    "tipo",
+    "descricao",
+    "valor_total"
+  ]
+}

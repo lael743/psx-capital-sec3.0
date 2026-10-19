@@ -1,0 +1,62 @@
+{
+  "name": "DocumentoValidacao",
+  "type": "object",
+  "properties": {
+    "doc_id": {
+      "type": "string",
+      "description": "Identificador \u00fanico do documento (UUID gerado no momento da emiss\u00e3o)"
+    },
+    "doc_type": {
+      "type": "string",
+      "enum": [
+        "contrato",
+        "promissoria"
+      ],
+      "default": "promissoria"
+    },
+    "num_operacao": {
+      "type": "string"
+    },
+    "num_promissoria": {
+      "type": "string"
+    },
+    "operation_id": {
+      "type": "string",
+      "description": "ID real da opera\u00e7\u00e3o vinculada (se houver)"
+    },
+    "emitente_nome": {
+      "type": "string"
+    },
+    "emitente_doc": {
+      "type": "string"
+    },
+    "beneficiario_nome": {
+      "type": "string"
+    },
+    "beneficiario_doc": {
+      "type": "string"
+    },
+    "valor": {
+      "type": "number"
+    },
+    "data_emissao": {
+      "type": "string",
+      "format": "date"
+    },
+    "data_vencimento": {
+      "type": "string",
+      "format": "date"
+    },
+    "status_operacao": {
+      "type": "string",
+      "description": "Status no momento da emiss\u00e3o"
+    }
+  },
+  "required": [
+    "doc_id",
+    "doc_type",
+    "emitente_nome",
+    "valor",
+    "data_vencimento"
+  ]
+}

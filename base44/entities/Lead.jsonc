@@ -1,0 +1,65 @@
+{
+  "name": "Lead",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome completo"
+    },
+    "email": {
+      "type": "string",
+      "description": "E-mail"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Telefone/WhatsApp"
+    },
+    "document": {
+      "type": "string",
+      "description": "CPF ou CNPJ"
+    },
+    "document_type": {
+      "type": "string",
+      "enum": [
+        "CPF",
+        "CNPJ"
+      ],
+      "default": "CPF"
+    },
+    "interest": {
+      "type": "string",
+      "description": "Tipo de produto ou servi\u00e7o de interesse"
+    },
+    "source": {
+      "type": "string",
+      "default": "site",
+      "description": "Origem do lead"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "novo",
+        "contatado",
+        "qualificado",
+        "convertido",
+        "descartado"
+      ],
+      "default": "novo"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Observa\u00e7\u00f5es adicionais"
+    },
+    "linked_client_id": {
+      "type": "string",
+      "description": "ID do cliente vinculado no administrativo"
+    },
+    "linked_client_name": {
+      "type": "string",
+      "description": "Nome do cliente vinculado no administrativo"
+    }
+  },
+  "required": [
+    "name"
+  ]
+}

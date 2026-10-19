@@ -1,0 +1,30 @@
+{
+  "name": "User",
+  "type": "object",
+  "properties": {
+    "role": {
+      "type": "string",
+      "description": "The role of the user in the app",
+      "enum": [
+        "admin",
+        "user"
+      ]
+    },
+    "allowed_pages": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Lista de p\u00e1ginas que o usu\u00e1rio tem acesso. Se vazio, admin v\u00ea tudo.",
+      "default": []
+    },
+    "is_active": {
+      "type": "boolean",
+      "description": "Se o usu\u00e1rio est\u00e1 ativo no sistema",
+      "default": true
+    }
+  },
+  "required": [
+    "role"
+  ]
+}

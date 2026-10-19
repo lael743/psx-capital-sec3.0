@@ -1,0 +1,43 @@
+{
+  "name": "NotificacaoAceite",
+  "type": "object",
+  "properties": {
+    "operation_id": {
+      "type": "string",
+      "description": "ID da opera\u00e7\u00e3o vinculada"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Nome do cliente/devedor notificado"
+    },
+    "aceite_hash": {
+      "type": "string",
+      "description": "Hash \u00fanico para acesso p\u00fablico ao aceite"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "enviado",
+        "visualizado",
+        "aceito"
+      ],
+      "default": "enviado"
+    },
+    "aceite_data": {
+      "type": "string",
+      "description": "Data/hora do aceite (ISO 8601)"
+    },
+    "aceite_ip": {
+      "type": "string",
+      "description": "IP de quem aceitou"
+    },
+    "dados_termo": {
+      "type": "object",
+      "description": "Snapshot dos dados usados no termo de notifica\u00e7\u00e3o"
+    }
+  },
+  "required": [
+    "operation_id",
+    "aceite_hash"
+  ]
+}

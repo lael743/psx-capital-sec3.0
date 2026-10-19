@@ -1,0 +1,341 @@
+{
+  "name": "Client",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Nome completo ou raz\u00e3o social"
+    },
+    "fantasy_name": {
+      "type": "string",
+      "description": "Nome fantasia (apenas para CNPJ)"
+    },
+    "document": {
+      "type": "string",
+      "description": "CPF ou CNPJ"
+    },
+    "document_type": {
+      "type": "string",
+      "enum": [
+        "CPF",
+        "CNPJ"
+      ],
+      "default": "CPF"
+    },
+    "phone": {
+      "type": "string",
+      "description": "Telefone principal"
+    },
+    "whatsapp": {
+      "type": "string",
+      "description": "N\u00famero WhatsApp"
+    },
+    "email": {
+      "type": "string",
+      "description": "E-mail"
+    },
+    "address": {
+      "type": "string",
+      "description": "Endere\u00e7o completo (legacy)"
+    },
+    "city": {
+      "type": "string"
+    },
+    "state": {
+      "type": "string"
+    },
+    "zip_code": {
+      "type": "string"
+    },
+    "inscricao_estadual": {
+      "type": "string",
+      "description": "Inscri\u00e7\u00e3o Estadual (PJ)"
+    },
+    "inscricao_municipal": {
+      "type": "string",
+      "description": "Inscri\u00e7\u00e3o Municipal (PJ)"
+    },
+    "cnae": {
+      "type": "string",
+      "description": "CNAE principal"
+    },
+    "regime_tributario": {
+      "type": "string",
+      "enum": [
+        "simples_nacional",
+        "lucro_presumido",
+        "lucro_real",
+        "mei",
+        "outro"
+      ],
+      "description": "Regime tribut\u00e1rio"
+    },
+    "setor_segmento": {
+      "type": "string",
+      "description": "Setor/segmento de atua\u00e7\u00e3o"
+    },
+    "grupo_economico": {
+      "type": "string",
+      "description": "Grupo econ\u00f4mico"
+    },
+    "capital_social": {
+      "type": "number",
+      "description": "Capital social em R$"
+    },
+    "data_fundacao": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de funda\u00e7\u00e3o/nascimento"
+    },
+    "gerente_parceiro": {
+      "type": "string",
+      "description": "Gerente parceiro respons\u00e1vel"
+    },
+    "enderecos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "description": "Tipo: Residencial, Comercial, Cobran\u00e7a, Correspond\u00eancia, Faturamento"
+          },
+          "cep": {
+            "type": "string"
+          },
+          "logradouro": {
+            "type": "string"
+          },
+          "numero": {
+            "type": "string"
+          },
+          "bairro": {
+            "type": "string"
+          },
+          "cidade": {
+            "type": "string"
+          },
+          "uf": {
+            "type": "string"
+          },
+          "complemento": {
+            "type": "string"
+          },
+          "principal": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "description": "M\u00faltiplos endere\u00e7os do cedente"
+    },
+    "emails": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "description": "Tipo: Pessoal, Comercial, Financeiro"
+          },
+          "email": {
+            "type": "string"
+          },
+          "principal": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "description": "M\u00faltiplos e-mails do cedente"
+    },
+    "telefones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tipo": {
+            "type": "string",
+            "description": "Tipo: Celular, Fixo, WhatsApp"
+          },
+          "descricao": {
+            "type": "string"
+          },
+          "numero": {
+            "type": "string"
+          },
+          "principal": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "description": "M\u00faltiplos telefones do cedente"
+    },
+    "credit_limit": {
+      "type": "number",
+      "description": "Limite de cr\u00e9dito em R$"
+    },
+    "default_rate": {
+      "type": "number",
+      "description": "Taxa padr\u00e3o mensal em %"
+    },
+    "tarifa_por_titulo": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa por t\u00edtulo (R$)"
+    },
+    "tarifa_por_operacao": {
+      "type": "number",
+      "default": 0,
+      "description": "Tarifa por opera\u00e7\u00e3o (R$)"
+    },
+    "limite_sacado_geral": {
+      "type": "number",
+      "description": "Limite por sacado (geral) em R$"
+    },
+    "limite_sacado_pj": {
+      "type": "number",
+      "description": "Limite por sacado PJ em R$"
+    },
+    "limite_sacado_pf": {
+      "type": "number",
+      "description": "Limite por sacado PF em R$"
+    },
+    "bloqueado": {
+      "type": "boolean",
+      "default": false,
+      "description": "Cedente bloqueado para novas opera\u00e7\u00f5es"
+    },
+    "recuperacao_judicial": {
+      "type": "boolean",
+      "default": false,
+      "description": "Cedente em recupera\u00e7\u00e3o judicial"
+    },
+    "emissor_ccb": {
+      "type": "boolean",
+      "default": false,
+      "description": "Emissor de CCB"
+    },
+    "vencimento_cadastro": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de vencimento do cadastro"
+    },
+    "float_dias": {
+      "type": "number",
+      "default": 0,
+      "description": "Float padr\u00e3o em dias"
+    },
+    "multa_atraso_pct": {
+      "type": "number",
+      "description": "Multa por atraso (%)"
+    },
+    "juros_pos_vencimento_pct": {
+      "type": "number",
+      "description": "Juros p\u00f3s vencimento (% a.m.)"
+    },
+    "multa_prorrogacao_pct": {
+      "type": "number",
+      "description": "Multa por prorroga\u00e7\u00e3o (%)"
+    },
+    "tarifa_recuperacao": {
+      "type": "number",
+      "description": "Tarifa de recupera\u00e7\u00e3o (R$)"
+    },
+    "status_cadastro": {
+      "type": "string",
+      "enum": [
+        "em_preenchimento",
+        "concluido"
+      ],
+      "default": "em_preenchimento",
+      "description": "Status do preenchimento do cadastro"
+    },
+    "contrato_mae_gerado": {
+      "type": "boolean",
+      "default": false,
+      "description": "Se o contrato m\u00e3e j\u00e1 foi gerado para este cedente"
+    },
+    "internal_score": {
+      "type": "number",
+      "description": "Score interno de 0 a 1000"
+    },
+    "risk_profile": {
+      "type": "string",
+      "enum": [
+        "baixo",
+        "medio",
+        "alto"
+      ],
+      "default": "medio"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ativo",
+        "bloqueado",
+        "risco"
+      ],
+      "default": "ativo"
+    },
+    "bank_name": {
+      "type": "string"
+    },
+    "bank_agency": {
+      "type": "string"
+    },
+    "bank_account": {
+      "type": "string"
+    },
+    "bank_account_type": {
+      "type": "string",
+      "enum": [
+        "corrente",
+        "poupanca",
+        "pagamento"
+      ],
+      "default": "corrente"
+    },
+    "pix_key": {
+      "type": "string"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Anota\u00e7\u00f5es internas"
+    },
+    "total_borrowed": {
+      "type": "number",
+      "default": 0
+    },
+    "total_paid": {
+      "type": "number",
+      "default": 0
+    },
+    "total_profit": {
+      "type": "number",
+      "default": 0
+    },
+    "default_index": {
+      "type": "number",
+      "default": 0,
+      "description": "\u00cdndice de atraso em %"
+    },
+    "doc_rg_url": {
+      "type": "string"
+    },
+    "doc_cnh_url": {
+      "type": "string"
+    },
+    "doc_income_url": {
+      "type": "string"
+    },
+    "doc_address_url": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "name",
+    "document"
+  ]
+}

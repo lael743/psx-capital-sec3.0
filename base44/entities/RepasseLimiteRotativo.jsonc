@@ -1,0 +1,58 @@
+{
+  "name": "RepasseLimiteRotativo",
+  "type": "object",
+  "properties": {
+    "limite_id": {
+      "type": "string",
+      "description": "ID do limite rotativo vinculado"
+    },
+    "client_id": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "tipo": {
+      "type": "string",
+      "enum": [
+        "cheque",
+        "pix",
+        "dinheiro",
+        "transferencia"
+      ]
+    },
+    "valor_bruto": {
+      "type": "number",
+      "description": "Valor bruto do repasse"
+    },
+    "valor_liquido": {
+      "type": "number",
+      "description": "Valor l\u00edquido creditado no saldo devedor"
+    },
+    "data_emissao": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de emiss\u00e3o (hoje)"
+    },
+    "data_vencimento": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de vencimento (apenas cheques)"
+    },
+    "dias_calculados": {
+      "type": "number",
+      "description": "Dias at\u00e9 o vencimento (apenas cheques)"
+    },
+    "notas": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "limite_id",
+    "client_id",
+    "tipo",
+    "valor_bruto",
+    "valor_liquido",
+    "data_emissao"
+  ]
+}

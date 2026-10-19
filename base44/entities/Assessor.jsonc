@@ -1,0 +1,32 @@
+{
+  "name": "Assessor",
+  "type": "object",
+  "properties": {
+    "user_email": {
+      "type": "string",
+      "description": "Email do usu\u00e1rio vinculado"
+    },
+    "name": {
+      "type": "string",
+      "description": "Nome completo do assessor"
+    },
+    "token": {
+      "type": "string",
+      "description": "Token/senha de seguran\u00e7a para autorizar opera\u00e7\u00f5es"
+    },
+    "active": {
+      "type": "boolean",
+      "default": true,
+      "description": "Se o assessor est\u00e1 ativo"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Observa\u00e7\u00f5es internas"
+    }
+  },
+  "required": [
+    "user_email",
+    "name",
+    "token"
+  ]
+}

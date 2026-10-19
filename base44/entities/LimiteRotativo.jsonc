@@ -1,0 +1,42 @@
+{
+  "name": "LimiteRotativo",
+  "type": "object",
+  "properties": {
+    "client_id": {
+      "type": "string"
+    },
+    "client_name": {
+      "type": "string"
+    },
+    "valor_bruto": {
+      "type": "number",
+      "description": "Valor adiantado ao cliente"
+    },
+    "taxa_mensal": {
+      "type": "number",
+      "description": "Taxa mensal em %"
+    },
+    "data_inicio": {
+      "type": "string",
+      "format": "date"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "ativo",
+        "quitado",
+        "cancelado"
+      ],
+      "default": "ativo"
+    },
+    "notas": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "client_id",
+    "valor_bruto",
+    "taxa_mensal",
+    "data_inicio"
+  ]
+}

@@ -1,0 +1,68 @@
+{
+  "name": "CashFlow",
+  "type": "object",
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": [
+        "entrada",
+        "saida"
+      ],
+      "default": "entrada"
+    },
+    "category": {
+      "type": "string",
+      "description": "Categoria (ex: compensacao_cheque, lancamento_avulso, etc)"
+    },
+    "amount": {
+      "type": "number"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "description": {
+      "type": "string"
+    },
+    "operation_id": {
+      "type": "string",
+      "description": "Vinculo com operacao (obrigatorio para categorias operacionais)"
+    },
+    "payment_id": {
+      "type": "string",
+      "description": "Vinculo com pagamento (opcional)"
+    },
+    "bank_id": {
+      "type": "string",
+      "description": "ID do Banco (nao o nome). Obrigatorio para categorias bancarias."
+    },
+    "source_type": {
+      "type": "string",
+      "description": "Tipo da origem do evento financeiro (ex: cheque_compensacao, asaas_payment, pagamento_manual). Usado para idempotencia junto com source_id."
+    },
+    "source_id": {
+      "type": "string",
+      "description": "ID da origem do evento (ex: ID do cheque, ID do pagamento Asaas). Usado para idempotencia junto com source_type."
+    },
+    "method": {
+      "type": "string",
+      "enum": [
+        "pix",
+        "dinheiro",
+        "transferencia",
+        "cheque",
+        "outro"
+      ]
+    },
+    "balance_after": {
+      "type": "number",
+      "description": "Saldo apos lancamento"
+    }
+  },
+  "required": [
+    "type",
+    "amount",
+    "date",
+    "description"
+  ]
+}

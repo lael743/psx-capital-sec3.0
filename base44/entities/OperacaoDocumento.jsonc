@@ -1,0 +1,47 @@
+{
+  "name": "OperacaoDocumento",
+  "type": "object",
+  "properties": {
+    "operation_id": {
+      "type": "string",
+      "description": "ID da opera\u00e7\u00e3o vinculada"
+    },
+    "client_id": {
+      "type": "string",
+      "description": "ID do cliente (cedente)"
+    },
+    "client_name": {
+      "type": "string",
+      "description": "Nome do cliente (sincronizado)"
+    },
+    "doc_category": {
+      "type": "string",
+      "description": "Categoria do documento (ex: Notas Fiscais, T\u00edtulos, Contratos)"
+    },
+    "doc_type": {
+      "type": "string",
+      "description": "Tipo espec\u00edfico do documento (ex: DANFE XML, Cheque Digitalizado)"
+    },
+    "file_url": {
+      "type": "string",
+      "description": "URL do arquivo enviado"
+    },
+    "file_name": {
+      "type": "string",
+      "description": "Nome original do arquivo"
+    },
+    "file_size": {
+      "type": "number",
+      "description": "Tamanho do arquivo em bytes"
+    },
+    "notes": {
+      "type": "string",
+      "description": "Observa\u00e7\u00e3o opcional"
+    }
+  },
+  "required": [
+    "operation_id",
+    "doc_type",
+    "file_url"
+  ]
+}
