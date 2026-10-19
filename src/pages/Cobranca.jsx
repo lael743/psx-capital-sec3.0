@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { formatCurrency, formatDate, daysOverdue, overdueClass } from '@/lib/finance';
+import { fetchAll } from '@/lib/fetchAll';
 import { MessageCircle, RefreshCw, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 
 const classConfig = {
@@ -29,8 +30,8 @@ export default function Cobranca() {
 
   useEffect(() => {
     Promise.all([
-      base44.entities.Operation.list('-due_date', 500),
-      base44.entities.Client.list('-name', 300),
+      fetchAll('Operation', '-due_date'),
+      fetchAll('Client', '-name'),
     ]).then(([ops, cls]) => {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
