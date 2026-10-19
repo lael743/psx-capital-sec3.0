@@ -7,6 +7,7 @@ import PageHeader from '@/components/ui/PageHeader';
 import StatCard from '@/components/ui/StatCard';
 import { DataTable, TableHead, Th, TableBody, Tr, Td, EmptyRow } from '@/components/ui/DataTable';
 import { exportToCsv } from '@/lib/exportCsv';
+import { fetchAll } from '@/lib/fetchAll';
 
 export default function FluxoCaixa() {
   const [entries, setEntries] = useState([]);
@@ -16,7 +17,7 @@ export default function FluxoCaixa() {
   const [form, setForm] = useState({ type: 'entrada', category: '', amount: '', date: today(), description: '', method: 'pix' });
 
   const load = () => {
-    base44.entities.CashFlow.list('-date', 300).then(data => {
+    fetchAll('CashFlow', '-date').then(data => {
       setEntries(data);
       setLoading(false);
     });
