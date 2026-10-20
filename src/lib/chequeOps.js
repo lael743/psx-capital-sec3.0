@@ -60,3 +60,50 @@ export const inspecionarCheque = (cheque) => chamar({
   acao: 'inspecionar',
   chequeId: cheque.id,
 });
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * M2 — RESOLUÇÃO DO CHEQUE DEVOLVIDO
+ *
+ * Mesmo contrato da M1: aqui só se monta o pedido. Taxa, valor, conta, papel e
+ * efeito financeiro são decididos pelo servidor.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Resolve o cheque devolvido: novo_cheque | prorrogacao | pagamento. */
+export const resolverChequeDevolvido = ({ cheque, ...dados }) => chamar({
+  acao: 'resolver',
+  chequeId: cheque.id,
+  ...dados,
+});
+
+/** Recebe a taxa cobrada SEPARADAMENTE da obrigação. */
+export const receberTaxaDevolucao = ({ cheque, ...dados }) => chamar({
+  acao: 'receber_taxa',
+  chequeId: cheque.id,
+  ...dados,
+});
+
+/** Registra a entrega física do cheque. Não quita a dívida. */
+export const devolverChequeFisicamente = ({ cheque, ...dados }) => chamar({
+  acao: 'devolver_fisica',
+  chequeId: cheque.id,
+  ...dados,
+});
+
+/** Estorna a resolução paga. Exige evidência do recebimento original. */
+export const estornarResolucao = ({ cheque, ...dados }) => chamar({
+  acao: 'estornar_resolucao',
+  chequeId: cheque.id,
+  ...dados,
+});
+
+/** Conclui somente etapas comprovadamente pendentes. Nunca recredita saldo. */
+export const recuperarResolucao = (cheque) => chamar({
+  acao: 'recuperar_resolucao',
+  chequeId: cheque.id,
+});
+
+/** Diagnóstico somente leitura da resolução. */
+export const inspecionarResolucao = (cheque) => chamar({
+  acao: 'inspecionar_resolucao',
+  chequeId: cheque.id,
+});

@@ -450,3 +450,57 @@ export function taxaDevolucaoPendente(cheque) {
   const recebida = Number(cheque && cheque.taxa_recebida) || 0;
   return Math.max(0, round2(total - recebida));
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * M2 — BASE CONGELADA DA TAXA, PERÍODO DE JUROS E DEVOLUÇÃO FÍSICA
+ *
+ * A taxa é percentual sobre o valor de FACE ORIGINAL do cheque, congelado no
+ * momento da cobrança (`taxa_base_valor`). Prorrogar não altera o valor de face
+ * e substituir herda apenas o principal em aberto: nenhuma das duas pode mudar
+ * a base de uma taxa já cobrada.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Base congelada da taxa: congelada > face > value (compatibilidade histórica). */
+export function baseTaxaCongelada(cheque) {
+  const congelada = Number(cheque && cheque.taxa_base_valor);
+  if (Number.isFinite(congelada) && congelada > 0) return round2(congelada);
+  const face = Number(cheque && cheque.valor_face);
+  if (Number.isFinite(face) && face > 0) return round2(face);
+  return round2(cheque && cheque.value);
+}
+
+/** Taxa devida = base congelada × percentual. Percentual 0 → sem taxa. */
+export function calcTaxaDevolucao(base, percentual) {
+  const b = Number(base) || 0;
+  const p = Number(percentual) || 0;
+  if (b <= 0 || p <= 0) return 0;
+  return round2(b * (p / 100));
+}
+
+/**
+ * Início do próximo período de juros.
+ * Parte do VENCIMENTO ORIGINAL e nunca retrocede além do que já foi cobrado:
+ * é essa comparação que impede dois períodos de juros sobrepostos.
+ */
+export function inicioJurosResolucao(cheque) {
+  const cobradoAte = (cheque && cheque.juros_cobrados_ate) || '';
+  const vencimento = chequeDueDate(cheque);
+  if (!cobradoAte) return vencimento;
+  if (!vencimento) return cobradoAte;
+  return cobradoAte > vencimento ? cobradoAte : vencimento;
+}
+
+/** Chave do evento de DEVOLUÇÃO FÍSICA — registra o ato, não movimenta saldo. */
+export function chaveDevolucaoFisica(chequeId) {
+  return `devolucao_fisica_cheque:${chequeId}`;
+}
+
+/**
+ * Valor recebível no ato da resolução: principal + taxa quando a taxa foi
+ * INCORPORADA à obrigação. Taxa separada tem evento próprio de recebimento.
+ */
+export function valorRecebivelResolucao(cheque) {
+  const principal = round2(cheque && cheque.value);
+  const taxa = round2(cheque && cheque.taxa_devolucao);
+  return round2(principal + (cheque && cheque.taxa_incorporada === true ? taxa : 0));
+}

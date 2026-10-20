@@ -3,9 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { Save, Plus, Filter, RefreshCw, Download, X, CalendarClock, DollarSign, Package, CheckCircle2, Image, MoreVertical, AlertTriangle, Search, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { logAction } from '@/lib/audit';
-import { chaveEvento } from '@/lib/bankLedger';
-import { aplicarEventoBancario } from '@/lib/financeEvents';
-import { compensateCheque } from '@/lib/chequeOps';
+import { compensateCheque, estornarResolucao } from '@/lib/chequeOps';
 import { fetchAll } from '@/lib/fetchAll';
 import TesourariaTab from '@/components/cheque/TesourariaTab';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -17,188 +15,11 @@ import ProrrogarChequeModal from '@/components/cheque/ProrrogarChequeModal';
 import ChequeDevolvidoModal from '@/components/cheque/ChequeDevolvidoModal';
 import ReceberLucroProrrogacaoModal from '@/components/cheque/ReceberLucroProrrogacaoModal';
 import ChequeImagensModal from '@/components/cheque/ChequeImagensModal';
+import DevolucaoFisicaModal from '@/components/cheque/DevolucaoFisicaModal';
 
 const STORAGE_KEY = 'psx_company_settings';
 function getSettings() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
-}
-
-// Modal para troca/substituição de cheque devolvido
-function TrocaChequeModal({ cheque, onClose, onSaved }) {
-  const [form, setForm] = useState({
-    resolve_type: 'novo_cheque',
-    bank_name: '',
-    check_number: '',
-    new_date: '',
-    new_value: cheque?.value || '',
-    notes: '',
-    bank_id: cheque?.deposited_bank_id || '',
-  });
-  const [bancos, setBancos] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-
-  useEffect(() => {
-    base44.entities.Banco.filter({ active: true }, 'name', 100).then(bks => {
-      setBancos(bks);
-      if (!form.bank_id && bks.length > 0) {
-        const def = bks.find(b => b.is_default_lucro) || bks[0];
-        if (def) set('bank_id', def.id);
-      }
-    });
-  }, []);
-
-  const save = async () => {
-    setSaving(true);
-    if (form.resolve_type === 'novo_cheque') {
-      const newCheque = await base44.entities.Cheque.create({
-        operation_id: cheque.operation_id,
-        client_id: cheque.client_id,
-        client_name: cheque.client_name,
-        bank_name: form.bank_name.toUpperCase(),
-        check_number: form.check_number,
-        value: parseFloat(form.new_value),
-        compensation_date: form.new_date,
-        notes: `Substituição do cheque #${cheque.check_number} devolvido. ${form.notes}`.trim(),
-        status: 'pendente',
-      });
-      await base44.entities.Cheque.update(cheque.id, {
-        return_reason: form.notes || `Substituído por cheque #${form.check_number}`,
-        notes: (cheque.notes || '') + ` | SUBSTITUÍDO`,
-      });
-      await logAction({ action: 'update', entity: 'Cheque', entityId: cheque.id, description: `Cheque #${cheque.check_number} (${cheque.client_name}) substituído por novo cheque #${form.check_number}`, before: { status: cheque.status }, after: { status: 'substituido', novo_cheque: form.check_number } });
-    } else {
-      const methodLabel = form.resolve_type === 'pix' ? 'PIX' : form.resolve_type === 'dinheiro' ? 'Dinheiro' : 'Transferência';
-      const methodKey = form.resolve_type === 'pix' ? 'pix' : form.resolve_type === 'dinheiro' ? 'dinheiro' : 'transferencia';
-      const banco = bancos.find(b => b.id === form.bank_id);
-
-      await base44.entities.Cheque.update(cheque.id, {
-        status: 'resolvido_pago',
-        return_reason: `Pago via ${methodLabel} em ${form.new_date}. ${form.notes}`.trim(),
-        notes: (cheque.notes || '') + ` | PAGO VIA ${methodLabel.toUpperCase()} em ${form.new_date}`,
-      });
-
-      if (banco) {
-        // D3.1 — mesma chave de evento do outro modal de resolução: o cheque só
-        // é resolvido uma vez, então crédito e lançamento também só uma vez.
-        const chave = chaveEvento('resolucao_cheque', cheque.id);
-        await aplicarEventoBancario({
-          store: { updateWhere: (q, u) => base44.entities.Banco.updateMany(q, u) },
-          bankId: form.bank_id,
-          delta: cheque.value || 0,
-          eventKey: chave,
-          aoAplicar: () => base44.entities.CashFlow.create({
-            type: 'entrada',
-            category: 'recebimento_operacao',
-            amount: cheque.value || 0,
-            date: form.new_date,
-            description: `Recebimento via ${methodLabel} — cheque devolvido #${cheque.check_number} (${cheque.client_name})${form.notes ? ' — ' + form.notes : ''}`,
-            method: methodKey,
-            operation_id: cheque.operation_id,
-            bank_id: form.bank_id,
-            source_type: 'resolucao_cheque',
-            source_id: chave,
-          }),
-        });
-      }
-
-      await logAction({ action: 'status_change', entity: 'Cheque', entityId: cheque.id, description: `Cheque #${cheque.check_number} (${cheque.client_name}) resolvido via ${methodLabel} em ${form.new_date}${banco ? ` — Banco: ${banco.name}` : ''}`, before: { status: 'devolvido' }, after: { status: 'resolvido_pago', metodo: form.resolve_type } });
-    }
-    setSaving(false);
-    onSaved();
-    onClose();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
-      <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-lg">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-          <div>
-            <h3 className="text-sm font-bold">Troca / Resolução de Cheque</h3>
-            <p className="text-xs text-muted-foreground mt-0.5">Cheque #{cheque?.check_number} — {formatCurrency(cheque?.value)}</p>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100"><X className="w-4 h-4" /></button>
-        </div>
-        <div className="p-5 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-muted-foreground mb-2">Como o cliente vai resolver?</label>
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { value: 'novo_cheque', label: '🗒️ Novo Cheque', desc: 'Troca por outro cheque' },
-                { value: 'pix', label: '⚡ PIX', desc: 'Pagamento via PIX' },
-                { value: 'dinheiro', label: '💵 Dinheiro', desc: 'Pagamento em espécie' },
-                { value: 'transferencia', label: '🏦 Transferência', desc: 'TED/DOC' },
-              ].map(opt => (
-                <button key={opt.value} type="button" onClick={() => set('resolve_type', opt.value)}
-                  className={`text-left p-3 rounded-xl border-2 transition-colors ${form.resolve_type === opt.value ? 'border-foreground bg-gray-50' : 'border-border hover:bg-gray-50'}`}>
-                  <div className="text-sm font-semibold">{opt.label}</div>
-                  <div className="text-xs text-muted-foreground">{opt.desc}</div>
-                </button>
-              ))}
-            </div>
-          </div>
-          {form.resolve_type === 'novo_cheque' && (
-            <div className="space-y-3 p-4 bg-gray-50 rounded-xl">
-              <div className="text-xs font-semibold text-muted-foreground uppercase">Dados do Novo Cheque</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Banco *</label>
-                  <input className="input-field uppercase" placeholder="BRADESCO" value={form.bank_name} onChange={e => set('bank_name', e.target.value.toUpperCase())} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Nº do Cheque *</label>
-                  <input className="input-field" placeholder="000000" value={form.check_number} onChange={e => set('check_number', e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Valor (R$) *</label>
-                  <input className="input-field" type="number" step="0.01" value={form.new_value} onChange={e => set('new_value', e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Data Compensação *</label>
-                  <input className="input-field" type="date" value={form.new_date} onChange={e => set('new_date', e.target.value)} />
-                </div>
-              </div>
-            </div>
-          )}
-          {form.resolve_type !== 'novo_cheque' && (
-            <div className="space-y-3 p-4 bg-gray-50 rounded-xl">
-              <div className="text-xs font-semibold text-muted-foreground uppercase">Dados do Pagamento</div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Data do Pagamento *</label>
-                  <input className="input-field" type="date" value={form.new_date} onChange={e => set('new_date', e.target.value)} />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1">Creditar no banco</label>
-                  <select className="input-field" value={form.bank_id} onChange={e => set('bank_id', e.target.value)}>
-                    <option value="">Selecionar...</option>
-                    {bancos.map(b => <option key={b.id} value={b.id}>{b.name}{b.account ? ` — ${b.account}` : ''}</option>)}
-                  </select>
-                </div>
-              </div>
-              <div className="text-xs font-semibold text-foreground bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 flex justify-between">
-                <span>Valor a receber</span>
-                <span className="text-emerald-700">{formatCurrency(cheque?.value)}</span>
-              </div>
-            </div>
-          )}
-          <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Observações</label>
-            <input className="input-field" placeholder="Motivo ou anotação..." value={form.notes} onChange={e => set('notes', e.target.value)} />
-          </div>
-        </div>
-        <div className="flex justify-end gap-2 px-5 pb-5">
-          <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">Cancelar</button>
-          <button onClick={save}
-            disabled={saving || !form.new_date || (form.resolve_type === 'novo_cheque' && (!form.bank_name || !form.check_number || !form.new_value))}
-            className="flex items-center gap-2 px-5 py-2 bg-foreground text-primary-foreground text-sm font-semibold rounded-lg disabled:opacity-50">
-            <RefreshCw className="w-3.5 h-3.5" /> {saving ? 'Salvando...' : 'Confirmar Troca'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
 }
 
 // Modal de compensação com seleção de banco
@@ -411,8 +232,10 @@ export default function Cheques() {
   const [searchQueryTes, setSearchQueryTes] = useState('');
   const [activeTab, setActiveTab] = useState('todos'); // 'todos' | 'prorrogados' | 'tesouraria'
   const [showForm, setShowForm] = useState(false);
-  const [trocaCheque, setTrocaCheque] = useState(null);
   const [resolverDevolvido, setResolverDevolvido] = useState(null);
+  const [devolucaoFisica, setDevolucaoFisica] = useState(null);
+  const [confirmEstorno, setConfirmEstorno] = useState(null);
+  const [acaoErro, setAcaoErro] = useState('');
   const [prorrogarCheque, setProrrogarCheque] = useState(null);
   const [compensarCheque, setCompensarCheque] = useState(null);
   const [receberLucro, setReceberLucro] = useState(null);
@@ -483,6 +306,20 @@ export default function Cheques() {
       setPendingUpdate(null);
     }
     setConfirm({ open: false });
+  };
+
+  // Estorno da resolução: o servidor só debita com prova do crédito original.
+  const handleEstorno = async () => {
+    const cheque = confirmEstorno;
+    setConfirmEstorno(null);
+    if (!cheque) return;
+    try {
+      await estornarResolucao({ cheque, data: today() });
+      setAcaoErro('');
+      load();
+    } catch (e) {
+      setAcaoErro(e.message || 'Não foi possível estornar a resolução.');
+    }
   };
 
   const handleExport = () => {
@@ -604,12 +441,26 @@ export default function Cheques() {
         onConfirm={handleConfirm}
         onCancel={() => setConfirm({ open: false })}
       />
-
-      {trocaCheque && (
-        <TrocaChequeModal cheque={trocaCheque} onClose={() => setTrocaCheque(null)} onSaved={load} />
+      <ConfirmDialog
+        open={!!confirmEstorno}
+        title="Estornar Resolução"
+        message={`Estornar o recebimento da resolução do cheque #${confirmEstorno?.check_number || ''}? O valor é debitado da conta que o recebeu, e isso só ocorre com a comprovação do crédito original.`}
+        variant="danger"
+        onConfirm={handleEstorno}
+        onCancel={() => setConfirmEstorno(null)}
+      />
+      {acaoErro && (
+        <div className="mb-3 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center justify-between gap-3">
+          <span>{acaoErro}</span>
+          <button onClick={() => setAcaoErro('')} className="shrink-0"><X className="w-3.5 h-3.5" /></button>
+        </div>
       )}
+
       {resolverDevolvido && (
         <ChequeDevolvidoModal cheque={resolverDevolvido} onClose={() => setResolverDevolvido(null)} onSaved={load} />
+      )}
+      {devolucaoFisica && (
+        <DevolucaoFisicaModal cheque={devolucaoFisica} onClose={() => setDevolucaoFisica(null)} onSaved={load} />
       )}
       {prorrogarCheque && (
         <ProrrogarChequeModal cheque={prorrogarCheque} onClose={() => setProrrogarCheque(null)} onSaved={load} />
@@ -881,7 +732,21 @@ export default function Cheques() {
                                       </button>
                                     </>
                                   )}
-                                  {['compensado', 'resolvido_pago', 'resolvido_substituido', 'resolvido_prorrogado', 'cancelado'].includes(c.status) && (
+                                  {['resolvido_pago', 'resolvido_substituido', 'resolvido_prorrogado'].includes(c.status) && (
+                                    <>
+                                      <button onClick={() => { setMenuOpenId(null); setDevolucaoFisica(c); }}
+                                        className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 text-left">
+                                        <Package className="w-3.5 h-3.5" /> Devolução física
+                                      </button>
+                                      {c.status === 'resolvido_pago' && (
+                                        <button onClick={() => { setMenuOpenId(null); setConfirmEstorno(c); }}
+                                          className="w-full flex items-center gap-2 px-3 py-2 text-xs font-medium text-red-700 hover:bg-red-50 text-left">
+                                          <RefreshCw className="w-3.5 h-3.5" /> Estornar resolução
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+                                  {['compensado', 'cancelado'].includes(c.status) && (
                                     <div className="px-3 py-2 text-xs text-muted-foreground italic">Sem ações disponíveis</div>
                                   )}
                                 </div>

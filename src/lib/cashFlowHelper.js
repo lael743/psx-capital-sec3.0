@@ -20,6 +20,7 @@ export const OPERATIONAL_CATEGORIES = new Set([
   'repasse_cliente',
   'cheque_devolvido',
   'taxa_devolucao_cheque',
+  'estorno_resolucao_cheque',
   'lucro_prorrogacao',
   'lucro_prorrogacao_cheque',
 ]);
@@ -32,6 +33,7 @@ export const BANK_CATEGORIES = new Set([
   'compensacao_cheque',
   'estorno_compensacao',
   'recebimento_cheque_devolvido',
+  'estorno_resolucao_cheque',
   'lucro_prorrogacao_cheque',
   'lancamento_avulso',
   'transferencia_interna',

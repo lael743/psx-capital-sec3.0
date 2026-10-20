@@ -1,25 +1,29 @@
 import { useState, useEffect } from 'react';
-import { X, AlertTriangle, DollarSign, RefreshCw, MessageCircle } from 'lucide-react';
+import { X, AlertTriangle, DollarSign, MessageCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
-import { chaveEvento } from '@/lib/bankLedger';
-import { aplicarEventoBancario } from '@/lib/financeEvents';
-import { formatCurrency, formatDate, today } from '@/lib/finance';
-
-const bancoStore = { updateWhere: (q, u) => base44.entities.Banco.updateMany(q, u) };
+import { resolverChequeDevolvido } from '@/lib/chequeOps';
+import { calcJurosResolucao, diasEntreDatas, baseTaxaCongelada } from '@/lib/chequeCore';
+import { formatCurrency, today } from '@/lib/finance';
 
 /**
  * Modal de resolução para cheques devolvidos.
+ *
+ * M2 — o navegador NÃO escreve mais nada: taxa, obrigação, caixa e saldo são
+ * decididos e gravados pela função `chequeEvento`. Aqui só se monta o pedido.
+ *
  * Fluxo:
- *  1. Define taxa de devolução → atualiza balance_due da operação + lança no CashFlow
- *  2. Define forma de resolução: novo cheque, PIX, dinheiro, transferência ou prorrogação
- *  3. Gera mensagem WhatsApp de cobrança com total atualizado
+ *  1. Taxa de devolução (percentual sobre a face original congelada) e
+ *     modalidade de cobrança: incorporada à obrigação ou separada.
+ *  2. Forma de resolução: novo cheque, prorrogação ou pagamento.
+ *  3. Mensagem de WhatsApp de cobrança com o total atualizado.
  */
 export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
   const [operation, setOperation] = useState(null);
   const [client, setClient] = useState(null);
   const [bancos, setBancos] = useState([]);
 
-  const [taxaDevolucao, setTaxaDevolucao] = useState('500');
+  const [taxaPercentual, setTaxaPercentual] = useState('');
+  const [taxaIncorporada, setTaxaIncorporada] = useState(true);
   const [resolveType, setResolveType] = useState('');
   // novo cheque
   const [novoBanco, setNovoBanco] = useState('');
@@ -34,6 +38,7 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
 
   const [step, setStep] = useState(1); // 1 = taxa, 2 = resolução
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
   const [notes, setNotes] = useState('');
 
   useEffect(() => {
@@ -49,130 +54,54 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
     Promise.all(ops);
   }, [cheque]);
 
-  const taxa = parseFloat(taxaDevolucao) || 0;
-  const valorTotal = (cheque?.value || 0) + taxa;
-  const novoSaldo = (operation?.balance_due || 0) + taxa;
+  // A base da taxa é o valor de FACE original, congelado — nunca um valor
+  // alterado por prorrogação anterior.
+  const base = baseTaxaCongelada(cheque);
+  const percentual = parseFloat(taxaPercentual) || 0;
+  const taxa = Math.round(base * (percentual / 100) * 100) / 100;
+  const principal = Number(cheque?.value) || 0;
+  const valorTotal = Math.round((principal + taxa) * 100) / 100;
+  const novoSaldo = (operation?.total_receivable || 0) + (taxaIncorporada ? taxa : 0);
 
-  // Calcula juros de prorrogação (reutiliza lógica do ProrrogarChequeModal)
-  const diasProrrogacao = (() => {
-    if (!novaDataProrrogacao) return 0;
-    const t = today();
-    if (novaDataProrrogacao <= t) return 0;
-    return Math.round((new Date(novaDataProrrogacao) - new Date(t)) / 86400000);
-  })();
+  // Juros da prorrogação: MESMA fórmula do fluxo normal, contados do vencimento
+  // original e nunca sobre um período já coberto.
+  const inicioJuros = cheque?.juros_cobrados_ate || cheque?.compensation_date || '';
+  const diasProrrogacao = novaDataProrrogacao ? diasEntreDatas(inicioJuros, novaDataProrrogacao) : 0;
   const taxaProrr = parseFloat(taxaMensalProrrogacao) || 0;
-  const jurosProrrogacao = taxaProrr && diasProrrogacao
-    ? Math.round(cheque.value * (Math.ceil((taxaProrr / 30) * 100) / 100 / 100) * diasProrrogacao * 100) / 100
-    : 0;
+  const jurosProrrogacao = calcJurosResolucao(principal, taxaProrr, diasProrrogacao);
 
-  const canProceedStep1 = taxa >= 0;
-  const canSave = resolveType && (
+  const pagamento = ['pix', 'dinheiro', 'transferencia'].includes(resolveType);
+
+  const canSave = !!resolveType && (
     resolveType === 'novo_cheque' ? (novoBanco && novoNumero && novaData) :
     resolveType === 'prorrogacao' ? (novaDataProrrogacao && novaDataProrrogacao > today() && taxaProrr > 0) :
-    !!dataPagamento
+    (!!dataPagamento && !!bancoId)
   );
 
   const save = async () => {
     setSaving(true);
-    const todayStr = today();
-
-    // 1. Aplica taxa de devolução no saldo da operação
-    if (taxa > 0 && operation) {
-      const novoBalanceDue = novoSaldo;
-      const novoTotalReceivable = (operation.total_receivable || 0) + taxa;
-      await base44.entities.Operation.update(cheque.operation_id, {
-        balance_due: novoBalanceDue,
-        total_receivable: novoTotalReceivable,
-        status: 'inadimplente',
+    setError('');
+    try {
+      await resolverChequeDevolvido({
+        cheque,
+        modalidade: pagamento ? 'pagamento' : resolveType,
+        data: pagamento ? dataPagamento : today(),
+        taxaPercentual: percentual,
+        taxaIncorporada,
+        novaData: resolveType === 'novo_cheque' ? novaData : novaDataProrrogacao,
+        novoBanco,
+        novoNumero,
+        taxaMensal: taxaProrr,
+        bankId: pagamento ? bancoId : '',
+        metodo: pagamento ? resolveType : '',
+        observacao: notes,
       });
-
-      // 2. Lança taxa no fluxo de caixa como encargo (a receber)
-      await base44.entities.CashFlow.create({
-        type: 'entrada',
-        category: 'taxa_devolucao_cheque',
-        amount: taxa,
-        date: todayStr,
-        description: `Taxa devolução cheque #${cheque.check_number} — ${cheque.client_name}`,
-        method: 'outro',
-      });
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(e.message || 'Não foi possível resolver o cheque.');
+      setSaving(false);
     }
-
-    // 3. Processa resolução escolhida
-    if (resolveType === 'novo_cheque') {
-      // Cria novo cheque substituto
-      await base44.entities.Cheque.create({
-        operation_id: cheque.operation_id,
-        client_id: cheque.client_id,
-        client_name: cheque.client_name,
-        bank_name: novoBanco.toUpperCase(),
-        check_number: novoNumero,
-        value: valorTotal,
-        compensation_date: novaData,
-        notes: `Substitui cheque #${cheque.check_number} devolvido. Taxa devolução: ${formatCurrency(taxa)}.${notes ? ' ' + notes : ''}`,
-        status: 'pendente',
-      });
-      // Atualiza cheque devolvido como resolvido por substituição
-      await base44.entities.Cheque.update(cheque.id, {
-        status: 'resolvido_substituido',
-        return_reason: `Devolvido. Substituído por cheque #${novoNumero}. Taxa: ${formatCurrency(taxa)}.${notes ? ' ' + notes : ''}`,
-      });
-    } else if (resolveType === 'prorrogacao') {
-      // Prorroga o mesmo cheque com novo valor (cheque + taxa + juros)
-      const totalComJuros = valorTotal + jurosProrrogacao;
-      const historico = `[DEVOLVIDO + PRORROGADO em ${todayStr}] Nova data: ${novaDataProrrogacao} | Dias: ${diasProrrogacao} | Taxa mensal: ${taxaProrr}% | Juros: ${formatCurrency(jurosProrrogacao)} | Taxa dev.: ${formatCurrency(taxa)} | Total: ${formatCurrency(totalComJuros)}${notes ? ' | Obs: ' + notes : ''}`;
-      await base44.entities.Cheque.update(cheque.id, {
-        status: 'resolvido_prorrogado',
-        compensation_date: novaDataProrrogacao,
-        value: totalComJuros,
-        return_reason: '',
-        notes: cheque.notes ? `${cheque.notes}\n${historico}` : historico,
-      });
-    } else {
-      // PIX / dinheiro / transferência — marca como compensado e registra entrada
-      const banco = bancos.find(b => b.id === bancoId);
-      const methodLabel = resolveType === 'pix' ? 'PIX' : resolveType === 'dinheiro' ? 'Dinheiro' : 'Transferência';
-      const methodKey = resolveType === 'pix' ? 'pix' : resolveType === 'dinheiro' ? 'dinheiro' : 'transferencia';
-      await base44.entities.Cheque.update(cheque.id, {
-        status: 'resolvido_pago',
-        return_reason: `Resolvido via ${methodLabel} em ${dataPagamento}. Taxa: ${formatCurrency(taxa)}.${notes ? ' ' + notes : ''}`,
-      });
-      if (banco) {
-        // D3.1 — crédito atômico, uma vez por resolução do cheque.
-        const chave = chaveEvento('resolucao_cheque', cheque.id);
-        await aplicarEventoBancario({
-          store: bancoStore,
-          bankId: bancoId,
-          delta: valorTotal,
-          eventKey: chave,
-          aoAplicar: () => base44.entities.CashFlow.create({
-            type: 'entrada',
-            category: 'recebimento_operacao',
-            amount: valorTotal,
-            date: dataPagamento,
-            description: `Recebimento via ${methodLabel} — cheque devolvido #${cheque.check_number} (${cheque.client_name})${taxa > 0 ? ` incl. taxa ${formatCurrency(taxa)}` : ''}${notes ? ' — ' + notes : ''}`,
-            method: methodKey,
-            operation_id: cheque.operation_id,
-            bank_id: bancoId,
-            source_type: 'resolucao_cheque',
-            source_id: chave,
-          }),
-        });
-      }
-      // Baixa no saldo da operação
-      if (operation) {
-        const novoPago = (operation.amount_paid || 0) + valorTotal;
-        const novoBalance = Math.max(0, (operation.balance_due || 0) - (cheque.value || 0));
-        await base44.entities.Operation.update(cheque.operation_id, {
-          amount_paid: novoPago,
-          balance_due: novoBalance,
-          status: novoBalance <= 0.01 ? 'quitado' : operation.status,
-        });
-      }
-    }
-
-    setSaving(false);
-    onSaved();
-    onClose();
   };
 
   const gerarMensagemWa = () => {
@@ -180,7 +109,7 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
     const num = (client.whatsapp || client.phone || '').replace(/\D/g, '');
     if (!num) return;
     const msg = encodeURIComponent(
-      `Olá ${client.name}! Seu cheque #${cheque.check_number} no valor de *${formatCurrency(cheque.value)}* foi devolvido pelo banco.\n\n` +
+      `Olá ${client.name}! Seu cheque #${cheque.check_number} no valor de *${formatCurrency(principal)}* foi devolvido pelo banco.\n\n` +
       `Será cobrada uma taxa de devolução de *${formatCurrency(taxa)}*, totalizando *${formatCurrency(valorTotal)}*.\n\n` +
       `Por favor, entre em contato para regularizar. Obrigado!`
     );
@@ -201,7 +130,7 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
             <div>
               <h3 className="text-sm font-bold">Resolver Cheque Devolvido</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
-                #{cheque?.check_number} — {formatCurrency(cheque?.value)} — {cheque?.client_name}
+                #{cheque?.check_number} — {formatCurrency(principal)} — {cheque?.client_name}
               </p>
             </div>
           </div>
@@ -221,28 +150,48 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
             <div className="pl-7 space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Taxa (R$)</label>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1.5">Taxa (%) sobre a face</label>
                   <input
                     className="input-field"
                     type="number"
                     step="0.01"
-                    value={taxaDevolucao}
-                    onChange={e => setTaxaDevolucao(e.target.value)}
-                    placeholder="500,00"
+                    value={taxaPercentual}
+                    onChange={e => setTaxaPercentual(e.target.value)}
+                    placeholder="0,00"
                   />
+                  <p className="text-xs text-muted-foreground mt-1">Face congelada: {formatCurrency(base)}</p>
                 </div>
                 <div className="bg-red-50 border border-red-100 rounded-xl p-3 flex flex-col justify-center">
-                  <div className="text-xs text-red-600 font-medium">Total a cobrar</div>
+                  <div className="text-xs text-red-600 font-medium">Total a receber</div>
                   <div className="text-base font-bold text-red-700">{formatCurrency(valorTotal)}</div>
                   <div className="text-xs text-red-500">cheque + taxa</div>
                 </div>
               </div>
+
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">Modalidade da taxa</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => setTaxaIncorporada(true)}
+                    className={`text-left p-2.5 rounded-xl border-2 transition-colors ${taxaIncorporada ? 'border-foreground bg-gray-50' : 'border-border hover:bg-gray-50'}`}>
+                    <div className="text-xs font-bold">Incorporada</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">Entra na obrigação da operação</div>
+                  </button>
+                  <button type="button" onClick={() => setTaxaIncorporada(false)}
+                    className={`text-left p-2.5 rounded-xl border-2 transition-colors ${!taxaIncorporada ? 'border-foreground bg-gray-50' : 'border-border hover:bg-gray-50'}`}>
+                    <div className="text-xs font-bold">Separada</div>
+                    <div className="text-xs text-muted-foreground mt-0.5">Cobrada à parte, com recebimento próprio</div>
+                  </button>
+                </div>
+              </div>
+
               {operation && (
                 <div className="text-xs text-muted-foreground bg-gray-50 rounded-lg px-3 py-2">
-                  Saldo devedor atual: <strong className="text-foreground">{formatCurrency(operation.balance_due)}</strong>
-                  {taxa > 0 && <> → passará para <strong className="text-red-600">{formatCurrency(novoSaldo)}</strong></>}
+                  Total a receber da operação: <strong className="text-foreground">{formatCurrency(operation.total_receivable)}</strong>
+                  {taxa > 0 && taxaIncorporada && <> → passará para <strong className="text-red-600">{formatCurrency(novoSaldo)}</strong></>}
+                  {taxa > 0 && !taxaIncorporada && <> — a taxa <strong>não</strong> altera a operação</>}
                 </div>
               )}
+
               <div className="flex gap-2">
                 {client && (
                   <button onClick={gerarMensagemWa}
@@ -268,7 +217,7 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
               <div className="pl-7 space-y-4">
                 <div className="grid grid-cols-2 gap-2">
                   {[
-                    { value: 'novo_cheque', label: '🗒️ Novo Cheque', desc: `Valor: ${formatCurrency(valorTotal)}` },
+                    { value: 'novo_cheque', label: '🗒️ Novo Cheque', desc: `Principal: ${formatCurrency(principal)}` },
                     { value: 'prorrogacao', label: '📅 Prorrogação', desc: 'Estender prazo + juros' },
                     { value: 'pix', label: '⚡ PIX', desc: 'Pagamento imediato' },
                     { value: 'dinheiro', label: '💵 Dinheiro', desc: 'Pagamento em espécie' },
@@ -296,14 +245,17 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
                         <input className="input-field" value={novoNumero} onChange={e => setNovoNumero(e.target.value)} />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Valor</label>
-                        <input className="input-field bg-gray-100" readOnly value={formatCurrency(valorTotal)} />
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Valor (principal)</label>
+                        <input className="input-field bg-gray-100" readOnly value={formatCurrency(principal)} />
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-muted-foreground mb-1">Data comp. *</label>
                         <input className="input-field" type="date" value={novaData} onChange={e => setNovaData(e.target.value)} />
                       </div>
                     </div>
+                    <p className="text-xs text-muted-foreground">
+                      O substituto mantém o principal. A taxa {taxaIncorporada ? 'já está incorporada à obrigação' : 'é cobrada separadamente'}.
+                    </p>
                   </div>
                 )}
 
@@ -323,16 +275,16 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
                     </div>
                     {diasProrrogacao > 0 && taxaProrr > 0 && (
                       <div className="bg-white border border-blue-100 rounded-lg px-3 py-2 text-xs space-y-1">
-                        <div className="flex justify-between"><span className="text-muted-foreground">Dias prorrogados</span><strong>{diasProrrogacao} dias</strong></div>
+                        <div className="flex justify-between"><span className="text-muted-foreground">Período de juros</span><strong>{diasProrrogacao} dias</strong></div>
                         <div className="flex justify-between"><span className="text-muted-foreground">Juros prorrogação</span><strong>{formatCurrency(jurosProrrogacao)}</strong></div>
-                        <div className="flex justify-between border-t border-blue-100 pt-1"><span className="font-semibold">Novo valor total do cheque</span><strong className="text-blue-700">{formatCurrency(valorTotal + jurosProrrogacao)}</strong></div>
+                        <div className="flex justify-between border-t border-blue-100 pt-1"><span className="font-semibold">Valor de face (inalterado)</span><strong className="text-blue-700">{formatCurrency(principal)}</strong></div>
                       </div>
                     )}
                   </div>
                 )}
 
                 {/* PIX / Dinheiro / Transferência */}
-                {['pix', 'dinheiro', 'transferencia'].includes(resolveType) && (
+                {pagamento && (
                   <div className="bg-gray-50 rounded-xl p-4 space-y-3">
                     <div className="text-xs font-semibold text-muted-foreground">Dados do pagamento</div>
                     <div className="grid grid-cols-2 gap-3">
@@ -341,7 +293,7 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
                         <input className="input-field" type="date" value={dataPagamento} onChange={e => setDataPagamento(e.target.value)} />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Creditar no banco</label>
+                        <label className="block text-xs font-medium text-muted-foreground mb-1">Creditar no banco *</label>
                         <select className="input-field" value={bancoId} onChange={e => setBancoId(e.target.value)}>
                           <option value="">Selecionar...</option>
                           {bancos.map(b => <option key={b.id} value={b.id}>{b.name}{b.account ? ` — ${b.account}` : ''}</option>)}
@@ -350,8 +302,13 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
                     </div>
                     <div className="text-xs font-semibold text-foreground bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 flex justify-between">
                       <span>Total a receber</span>
-                      <span className="text-emerald-700">{formatCurrency(valorTotal)}</span>
+                      <span className="text-emerald-700">{formatCurrency(taxaIncorporada ? valorTotal : principal)}</span>
                     </div>
+                    {!taxaIncorporada && taxa > 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        A taxa de {formatCurrency(taxa)} é cobrada em recebimento próprio.
+                      </p>
+                    )}
                   </div>
                 )}
 
@@ -365,15 +322,20 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
         </div>
 
         {/* Footer */}
-        <div className="flex justify-end gap-2 px-5 pb-5 pt-3 border-t border-border shrink-0">
-          <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">Cancelar</button>
-          {step >= 2 && (
-            <button onClick={save} disabled={saving || !canSave}
-              className="flex items-center gap-2 px-5 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg disabled:opacity-50 hover:bg-red-700">
-              <DollarSign className="w-3.5 h-3.5" />
-              {saving ? 'Salvando...' : 'Confirmar Resolução'}
-            </button>
+        <div className="px-5 pb-5 pt-3 border-t border-border shrink-0 space-y-2">
+          {error && (
+            <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</div>
           )}
+          <div className="flex justify-end gap-2">
+            <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">Cancelar</button>
+            {step >= 2 && (
+              <button onClick={save} disabled={saving || !canSave}
+                className="flex items-center gap-2 px-5 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg disabled:opacity-50 hover:bg-red-700">
+                <DollarSign className="w-3.5 h-3.5" />
+                {saving ? 'Salvando...' : 'Confirmar Resolução'}
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>

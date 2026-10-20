@@ -42,6 +42,12 @@ import {
   estornarCheque,
   recuperarLancamento,
   inspecionarCheque,
+  resolverChequeDevolvido,
+  receberTaxaDevolucao,
+  devolverChequeFisicamente,
+  estornarResolucao,
+  recuperarResolucao,
+  inspecionarResolucao,
   MOTIVOS,
 } from '../../shared/chequeEventFlow.js';
 import { createChequeCashFlow } from '../../shared/cashFlowHelper.ts';
@@ -56,10 +62,63 @@ const ACOES: Record<string, string> = {
   estornar: ACOES_BANCARIAS.ESTORNAR_CHEQUE,
   inspecionar: ACOES_BANCARIAS.INSPECIONAR_CHEQUE,
   recuperar_lancamento: ACOES_BANCARIAS.RECUPERAR_CHEQUE,
+  // M2 — resolução do cheque devolvido.
+  resolver: ACOES_BANCARIAS.RESOLVER_CHEQUE,
+  receber_taxa: ACOES_BANCARIAS.RECEBER_TAXA_CHEQUE,
+  devolver_fisica: ACOES_BANCARIAS.DEVOLVER_CHEQUE,
+  estornar_resolucao: ACOES_BANCARIAS.ESTORNAR_RESOLUCAO,
+  recuperar_resolucao: ACOES_BANCARIAS.RECUPERAR_CHEQUE,
+  inspecionar_resolucao: ACOES_BANCARIAS.INSPECIONAR_CHEQUE,
 };
 
 const falha = (erro: string, status = 400, extra: Record<string, unknown> = {}) =>
   Response.json({ ok: false, erro, ...extra }, { status });
+
+/** Recompõe `balance_due` a partir do total e do recebido, com CAS. */
+async function recalcularSaldo(servico: any, operacaoId: string) {
+  for (let tentativa = 0; tentativa < 5; tentativa += 1) {
+    const op = await servico.entities.Operation.get(operacaoId).catch(() => null);
+    if (!op) return;
+    const total = Number(op.total_receivable) || 0;
+    const recebido = Number(op.amount_paid) || 0;
+    const saldo = Math.max(0, total - recebido);
+    const status = saldo <= 0.01 && total > 0 ? 'quitado' : op.status;
+    const res = await servico.entities.Operation.updateMany(
+      { id: operacaoId, total_receivable: total, amount_paid: recebido },
+      { $set: { balance_due: saldo, status } }
+    );
+    if ((Number(res && res.updated) || 0) > 0) return;
+  }
+}
+
+/** Soma a taxa ao total a receber. Chamado UMA vez por resolução. */
+async function ajustarTotalReceivable(servico: any, operacaoId: string, delta: number) {
+  if (!operacaoId || !delta) return;
+  await servico.entities.Operation.updateMany({ id: operacaoId }, { $inc: { total_receivable: delta } });
+  await recalcularSaldo(servico, operacaoId);
+}
+
+/**
+ * Aplica o recebimento ao agregado da operação.
+ * Crédito entra por `$inc` (nunca sobrescreve recebimento concorrente); estorno
+ * entra condicionado ao valor observado e nunca deixa `amount_paid` negativo.
+ */
+async function registrarRecebimento(servico: any, operacaoId: string, delta: number) {
+  if (!operacaoId || !delta) return;
+  if (delta > 0) {
+    await servico.entities.Operation.updateMany({ id: operacaoId }, { $inc: { amount_paid: delta } });
+  } else {
+    const op = await servico.entities.Operation.get(operacaoId).catch(() => null);
+    const atual = Number(op && op.amount_paid) || 0;
+    const novo = Math.max(0, atual + delta);
+    const res = await servico.entities.Operation.updateMany(
+      { id: operacaoId, amount_paid: atual },
+      { $set: { amount_paid: novo } }
+    );
+    if ((Number(res && res.updated) || 0) === 0) return;
+  }
+  await recalcularSaldo(servico, operacaoId);
+}
 
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
@@ -75,8 +134,14 @@ Deno.serve(async (req) => {
   body = body || {};
 
   const acao = String(body.acao || '');
-  const acaoPolitica = ACOES[acao];
+  let acaoPolitica = ACOES[acao];
   if (!acaoPolitica) return falha('Ação de cheque desconhecida.', 403);
+
+  // M2 — devolução física SEM exceção é operacional; COM exceção é ato
+  // administrativo, decidido aqui e nunca pelo corpo da requisição.
+  if (acao === 'devolver_fisica' && body.excecao === true) {
+    acaoPolitica = ACOES_BANCARIAS.DEVOLVER_CHEQUE_EXCECAO;
+  }
 
   const politica = autorizarMovimentacaoBancaria(user, acaoPolitica);
   if (!politica.autorizado) {
@@ -130,6 +195,25 @@ Deno.serve(async (req) => {
     lerLancamentos: async (query: any) => lista(await servico.entities.CashFlow.filter(query).catch(() => [])),
   };
 
+  // ── M2 — resolução: privilégio de serviço + escrita financeira ─────────
+  const ioResolucao = {
+    ...io,
+    getOperacao: (id: string) => servico.entities.Operation.get(id).catch(() => null),
+    ajustarTotalReceivable: (operacaoId: string, delta: number) =>
+      ajustarTotalReceivable(servico, operacaoId, delta),
+    registrarRecebimento: (operacaoId: string, delta: number) =>
+      registrarRecebimento(servico, operacaoId, delta),
+    marcarTaxaRecebida: async (id: string, taxa: number, chave: string) => {
+      const res = await servico.entities.Cheque.updateMany(
+        { id, taxa_eventos: { $ne: chave } },
+        { $inc: { taxa_recebida: taxa }, $push: { taxa_eventos: chave } }
+      );
+      return (Number(res && res.updated) || 0) > 0;
+    },
+    lerCheques: async (query: any) => lista(await servico.entities.Cheque.filter(query).catch(() => [])),
+    criarCheque: (doc: any) => servico.entities.Cheque.create(doc),
+  };
+
   // ── Ações somente leitura / reparo idempotente ─────────────────────────
   if (acao === 'inspecionar') {
     const resultado = await inspecionarCheque({ cheque, io });
@@ -138,6 +222,109 @@ Deno.serve(async (req) => {
 
   if (acao === 'recuperar_lancamento') {
     const resultado = await recuperarLancamento({ cheque, io });
+    return Response.json({ ok: true, acao, resultado });
+  }
+
+  // ══════════════════ M2 — resolução de cheque devolvido ══════════════════
+  if (acao === 'inspecionar_resolucao') {
+    const resultado = await inspecionarResolucao({ cheque, io: ioResolucao });
+    return Response.json({ ok: true, acao, resultado });
+  }
+
+  if (acao === 'recuperar_resolucao') {
+    const resultado = await recuperarResolucao({ cheque, io: ioResolucao });
+    return Response.json({ ok: true, acao, resultado });
+  }
+
+  if (acao === 'resolver') {
+    const modalidade = String(body.modalidade || '');
+    const dia = String(body.data || '').slice(0, 10);
+    if (!DATA_REGEX.test(dia)) return falha('Data inválida.', 400);
+
+    // A conta do recebimento é resolvida AQUI: o corpo escolhe qual, o servidor
+    // confere que existe e usa o nome gravado, nunca o nome enviado.
+    let contaRecebimento: any = null;
+    if (modalidade === 'pagamento') {
+      const contaId = String(body.bankId || '');
+      if (!ID_REGEX.test(contaId)) return falha('Conta inválida.', 400);
+      contaRecebimento = await servico.entities.Banco.get(contaId).catch(() => null);
+      if (!contaRecebimento) return falha('Conta não encontrada.', 404);
+    }
+
+    const resultado = await resolverChequeDevolvido({
+      cheque,
+      modalidade,
+      data: dia,
+      taxaPercentual: Number(body.taxaPercentual) || 0,
+      taxaValor: Number(body.taxaValor) || 0,
+      taxaIncorporada: body.taxaIncorporada === true,
+      novaData: body.novaData ? String(body.novaData).slice(0, 10) : '',
+      novoBanco: body.novoBanco ? String(body.novoBanco) : '',
+      novoNumero: body.novoNumero ? String(body.novoNumero) : '',
+      taxaMensal: Number(body.taxaMensal) || 0,
+      bankId: contaRecebimento ? contaRecebimento.id : '',
+      bankName: contaRecebimento ? contaRecebimento.name : '',
+      metodo: body.metodo ? String(body.metodo) : '',
+      observacao: body.observacao ? String(body.observacao) : '',
+      io: ioResolucao,
+    });
+    return Response.json({ ok: true, acao, resultado });
+  }
+
+  if (acao === 'receber_taxa') {
+    const contaId = String(body.bankId || '');
+    if (!ID_REGEX.test(contaId)) return falha('Conta inválida.', 400);
+    const conta = await servico.entities.Banco.get(contaId).catch(() => null);
+    if (!conta) return falha('Conta não encontrada.', 404);
+    const dia = String(body.data || '').slice(0, 10);
+    if (!DATA_REGEX.test(dia)) return falha('Data inválida.', 400);
+
+    const resultado = await receberTaxaDevolucao({
+      cheque,
+      bankId: conta.id,
+      bankName: conta.name,
+      data: dia,
+      metodo: body.metodo ? String(body.metodo) : '',
+      observacao: body.observacao ? String(body.observacao) : '',
+      io: ioResolucao,
+    });
+    return Response.json({ ok: true, acao, resultado });
+  }
+
+  if (acao === 'devolver_fisica') {
+    const dia = String(body.data || '').slice(0, 10);
+    if (!DATA_REGEX.test(dia)) return falha('Data inválida.', 400);
+
+    const resultado = await devolverChequeFisicamente({
+      cheque,
+      data: dia,
+      justificativa: body.justificativa ? String(body.justificativa) : '',
+      excecao: body.excecao === true,
+      autorizadoPor: usuario.email,
+      io: ioResolucao,
+    });
+    return Response.json({ ok: true, acao, resultado });
+  }
+
+  if (acao === 'estornar_resolucao') {
+    const dia = String(body.data || '').slice(0, 10);
+    if (!DATA_REGEX.test(dia)) return falha('Data inválida.', 400);
+
+    let contaId = String(body.bankId || '');
+    if (contaId && !ID_REGEX.test(contaId)) return falha('Conta inválida.', 400);
+    if (!contaId) contaId = String(cheque.resolucao_bank_id || cheque.deposited_bank_id || '');
+    if (!contaId) return falha('Conta do recebimento não identificada.', 400);
+
+    const resultado = await estornarResolucao({ cheque, bankId: contaId, data: dia, io: ioResolucao });
+
+    if (resultado.status === 'nao_aplicado' && resultado.motivo === MOTIVOS.SEM_CREDITO_COMPROVADO) {
+      return Response.json({
+        ok: true,
+        acao,
+        resultado,
+        aviso: 'O recebimento original não foi localizado nesta conta. Nenhum débito foi aplicado.',
+      });
+    }
     return Response.json({ ok: true, acao, resultado });
   }
 

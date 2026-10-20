@@ -57,6 +57,11 @@ export const ACOES_BANCARIAS = Object.freeze({
   // M2 — resolução de cheque devolvido e recebimento da taxa.
   RESOLVER_CHEQUE: 'resolver_cheque',
   RECEBER_TAXA_CHEQUE: 'receber_taxa_cheque',
+  // M2 — devolução física do cheque: caminho padrão e exceção administrativa.
+  DEVOLVER_CHEQUE: 'devolver_cheque',
+  DEVOLVER_CHEQUE_EXCECAO: 'devolver_cheque_excecao',
+  // M2 — estorno do RECEBIMENTO de uma resolução: devolve dinheiro, é reversão.
+  ESTORNAR_RESOLUCAO: 'estornar_resolucao_cheque',
 });
 
 /** Chave de página usada pelo controle de acesso existente (pageAccess.js). */
@@ -77,6 +82,9 @@ const PAGINAS_POR_ACAO = Object.freeze({
   // do banco (é onde a conta está aberta).
   [ACOES_BANCARIAS.RESOLVER_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
   [ACOES_BANCARIAS.RECEBER_TAXA_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
+  // M2 — a devolução física padrão nasce na tela de Cheques ou no detalhe do
+  // banco. A EXCEÇÃO não passa por página: é administrativa (ver ADMINISTRATIVAS).
+  [ACOES_BANCARIAS.DEVOLVER_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
 });
 
 /** Ações que um operador com a página liberada pode executar. */
@@ -90,6 +98,7 @@ const OPERACIONAIS = Object.freeze([
   ACOES_BANCARIAS.INSPECIONAR_CHEQUE,
   ACOES_BANCARIAS.RESOLVER_CHEQUE,
   ACOES_BANCARIAS.RECEBER_TAXA_CHEQUE,
+  ACOES_BANCARIAS.DEVOLVER_CHEQUE,
 ]);
 
 /** Ações de natureza administrativa (reversão e recuperação). */
@@ -98,6 +107,8 @@ const ADMINISTRATIVAS = Object.freeze([
   ACOES_BANCARIAS.RECUPERAR,
   ACOES_BANCARIAS.LIBERAR_REIVINDICACAO,
   ACOES_BANCARIAS.RECUPERAR_CHEQUE,
+  ACOES_BANCARIAS.DEVOLVER_CHEQUE_EXCECAO,
+  ACOES_BANCARIAS.ESTORNAR_RESOLUCAO,
 ]);
 
 /**
