@@ -91,6 +91,10 @@
       "format": "date",
       "description": "Data real em que o cheque foi compensado/creditado (distinta da data de vencimento em compensation_date)"
     },
+    "compensation_token": {
+      "type": "string",
+      "description": "Token \u00fanico do evento de compensa\u00e7\u00e3o/estorno corrente. \u00c9 a chave de idempot\u00eancia do lan\u00e7amento de caixa \u2014 NUNCA usar a data (evita colis\u00e3o ao compensar, estornar e compensar no mesmo dia). Ver chequeEventKeys em src/lib/chequeCore.js."
+    },
     "status": {
       "type": "string",
       "enum": [

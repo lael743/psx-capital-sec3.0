@@ -3,9 +3,7 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { Save, Plus, Filter, RefreshCw, Download, X, CalendarClock, DollarSign, Package, CheckCircle2, Image, MoreVertical, AlertTriangle, Search, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { logAction } from '@/lib/audit';
-import { syncChequeCompensation } from '@/lib/syncCheque';
-import { createChequeCashFlow } from '@/lib/cashFlowHelper';
-import { shouldCompensate } from '@/lib/chequeCore';
+import { compensateCheque } from '@/lib/chequeOps';
 import { fetchAll } from '@/lib/fetchAll';
 import TesourariaTab from '@/components/cheque/TesourariaTab';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -212,53 +210,26 @@ function CompensarChequeModal({ cheque, onClose, onSaved }) {
   const save = async () => {
     setSaving(true);
 
-    // Idempotência: relê o cheque para impedir compensação duplicada
-    // (evita crédito em dobro no banco e CashFlow duplicado)
-    const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
-    if (!shouldCompensate(fresh)) {
-      setSaving(false);
-      onSaved();
-      onClose();
-      return;
-    }
-
-    await base44.entities.Cheque.update(cheque.id, {
-      status: 'compensado',
-      compensated_at: data,
-      deposited_bank_id: bancoId,
-      deposited_bank_name: banco?.name || '',
+    // Compensação com compare-and-swap: a gravação do cheque só acontece se ele
+    // ainda estiver 'pendente'. Duas execuções simultâneas → apenas uma vence,
+    // logo o banco é creditado no máximo uma vez por evento.
+    const res = await compensateCheque({
+      cheque,
+      bankId: bancoId,
+      bankName: banco?.name || '',
+      date: data,
     });
 
-    if (banco) {
-      await base44.entities.Banco.update(bancoId, {
-        current_balance: (banco.current_balance || 0) + (cheque.value || 0),
-      });
-      // Origem estável = cheque + data efetiva desta compensação.
-      // Reprocessar o mesmo evento não duplica; compensar novamente após um
-      // estorno (em outra data) gera uma origem nova e é permitido.
-      await createChequeCashFlow({
-        category: 'compensacao_cheque',
-        amount: cheque.value,
-        date: data,
-        description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco?.name})`,
-        method: 'cheque',
-        bank_id: bancoId,
-        source_type: 'cheque_compensacao',
-        source_id: `${cheque.id}#${data}`,
-        operation_id: cheque.operation_id,
+    if (res.status === 'aplicado') {
+      await logAction({
+        action: 'compensar',
+        entity: 'Cheque',
+        entityId: cheque.id,
+        description: `Cheque #${cheque.check_number} (${cheque.client_name}) compensado em ${data} — Banco: ${banco?.name || bancoId} — Valor: R$ ${cheque.value}`,
+        before: { status: 'pendente' },
+        after: { status: 'compensado', banco: banco?.name, data_compensacao: data, valor: cheque.value },
       });
     }
-
-    await logAction({
-      action: 'compensar',
-      entity: 'Cheque',
-      entityId: cheque.id,
-      description: `Cheque #${cheque.check_number} (${cheque.client_name}) compensado em ${data} — Banco: ${banco?.name || bancoId} — Valor: R$ ${cheque.value}`,
-      before: { status: 'pendente' },
-      after: { status: 'compensado', banco: banco?.name, data_compensacao: data, valor: cheque.value },
-    });
-
-    await syncChequeCompensation({ ...cheque, status: 'compensado', compensated_at: data });
 
     setSaving(false);
     onSaved();

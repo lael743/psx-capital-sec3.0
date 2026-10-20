@@ -7,9 +7,8 @@ import RetornarDepartamentoModal from '@/components/cheque/RetornarDepartamentoM
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import { logAction } from '@/lib/audit';
-import { syncChequeCompensation, syncChequeReversal } from '@/lib/syncCheque';
-import { createChequeCashFlow } from '@/lib/cashFlowHelper';
-import { shouldCompensate, shouldRevert, runIdempotentBatch } from '@/lib/chequeCore';
+import { compensateCheque, revertChequeCompensation } from '@/lib/chequeOps';
+import { shouldCompensate, runIdempotentBatch } from '@/lib/chequeCore';
 
 export default function BancoChequeTab({ banco, cheques = [], onReload }) {
   const [selected, setSelected] = useState(new Set());
@@ -60,44 +59,22 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
 
   const doCompensar = async (cheque) => {
     setSaving(true);
-    // Idempotência: impede compensar duas vezes o mesmo cheque
-    const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
-    if (!shouldCompensate(fresh)) {
-      setSaving(false);
-      refresh();
-      return;
+    const res = await compensateCheque({
+      cheque,
+      bankId: banco.id,
+      bankName: banco.name,
+      date: today(),
+    });
+    if (res.status === 'aplicado') {
+      await logAction({
+        action: 'compensar',
+        entity: 'Cheque',
+        entityId: cheque.id,
+        description: `Cheque #${cheque.check_number} (${cheque.client_name}) compensado no banco ${banco.name} — Valor: ${formatCurrency(cheque.value)}`,
+        before: { status: 'pendente' },
+        after: { status: 'compensado', banco: banco.name, valor: cheque.value },
+      });
     }
-    const dataComp = today();
-    await base44.entities.Cheque.update(cheque.id, {
-      status: 'compensado',
-      compensated_at: dataComp,
-      custody_status: 'financeiro',
-      deposited_bank_id: banco.id,
-      deposited_bank_name: banco.name,
-    });
-    await base44.entities.Banco.update(banco.id, {
-      current_balance: (banco.current_balance || 0) + (cheque.value || 0),
-    });
-    await createChequeCashFlow({
-      category: 'compensacao_cheque',
-      amount: cheque.value,
-      date: dataComp,
-      description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
-      method: 'cheque',
-      bank_id: banco.id,
-      source_type: 'cheque_compensacao',
-      source_id: `${cheque.id}#${dataComp}`,
-      operation_id: cheque.operation_id,
-    });
-    await logAction({
-      action: 'compensar',
-      entity: 'Cheque',
-      entityId: cheque.id,
-      description: `Cheque #${cheque.check_number} (${cheque.client_name}) compensado no banco ${banco.name} — Valor: ${formatCurrency(cheque.value)}`,
-      before: { status: 'pendente' },
-      after: { status: 'compensado', banco: banco.name, valor: cheque.value },
-    });
-    await syncChequeCompensation({ ...cheque, status: 'compensado' });
     setSaving(false);
     refresh();
   };
@@ -107,39 +84,26 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
     setBulkResult(null);
     setProgress({ current: 0, total: chequesToProcess.length, label: 'Iniciando...' });
 
-    // O saldo do banco é aplicado POR ITEM. Se o lote falhar no meio, o saldo
-    // reflete exatamente os cheques efetivamente compensados — nunca fica
-    // dessincronizado por um crédito em massa no final.
-    let saldoAtual = banco.current_balance || 0;
-
+    // Cada item passa pelo CAS dentro de compensateCheque: o saldo do banco é
+    // relido a cada crédito, então uma falha no meio do lote nunca deixa o
+    // saldo dessincronizado dos cheques efetivamente compensados.
     const res = await runIdempotentBatch(chequesToProcess, {
       // Guarda de idempotência por item: cheque já compensado é pulado.
+      // A proteção dura contra corrida é o CAS dentro de compensateCheque.
       isAlreadyDone: async (cheque) => {
         const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
         return !shouldCompensate(fresh);
       },
       run: async (cheque) => {
-        const dataComp = today();
-        await base44.entities.Cheque.update(cheque.id, {
-          status: 'compensado',
-          compensated_at: dataComp,
-          custody_status: 'financeiro',
-          deposited_bank_id: banco.id,
-          deposited_bank_name: banco.name,
+        const r = await compensateCheque({
+          cheque,
+          bankId: banco.id,
+          bankName: banco.name,
+          date: today(),
         });
-        saldoAtual += cheque.value || 0;
-        await base44.entities.Banco.update(banco.id, { current_balance: saldoAtual });
-        await createChequeCashFlow({
-          category: 'compensacao_cheque',
-          amount: cheque.value,
-          date: dataComp,
-          description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
-          method: 'cheque',
-          bank_id: banco.id,
-          source_type: 'cheque_compensacao',
-          source_id: `${cheque.id}#${dataComp}`,
-          operation_id: cheque.operation_id,
-        });
+        if (r.status !== 'aplicado') {
+          throw new Error('Estado já alterado por outra execução — nada foi aplicado.');
+        }
         await logAction({
           action: 'compensar',
           entity: 'Cheque',
@@ -148,7 +112,6 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
           before: { status: 'pendente' },
           after: { status: 'compensado', banco: banco.name, valor: cheque.value },
         });
-        await syncChequeCompensation({ ...cheque, status: 'compensado', compensated_at: dataComp });
       },
       onProgress: (current, total, cheque) => setProgress({
         current,
@@ -168,47 +131,22 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
 
   const doReverter = async (cheque) => {
     setSaving(true);
-    // Só estorna o que está de fato compensado — impede estorno duplicado
-    const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
-    if (!shouldRevert(fresh)) {
-      setSaving(false);
-      refresh();
-      return;
-    }
-    // A origem do estorno identifica a COMPENSAÇÃO sendo revertida (cheque +
-    // data efetiva). Assim, estornar o mesmo evento duas vezes não duplica o
-    // lançamento, mas uma nova compensação em outra data pode ser estornada.
-    const chaveCompensacao = fresh.compensated_at || fresh.compensation_date || 'sem-data';
-
-    await base44.entities.Cheque.update(cheque.id, {
-      status: 'pendente',
-      compensated_at: null, // limpa o estado de compensação; o histórico fica no AuditLog
-      custody_status: 'financeiro',
-    });
-    await base44.entities.Banco.update(banco.id, {
-      current_balance: (banco.current_balance || 0) - (cheque.value || 0),
-    });
-    await createChequeCashFlow({
-      type: 'saida',
-      category: 'estorno_compensacao',
-      amount: cheque.value,
+    const res = await revertChequeCompensation({
+      cheque,
+      bankId: banco.id,
+      bankName: banco.name,
       date: today(),
-      description: `Estorno compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
-      method: 'cheque',
-      bank_id: banco.id,
-      source_type: 'cheque_estorno_compensacao',
-      source_id: `${cheque.id}#${chaveCompensacao}`,
-      operation_id: cheque.operation_id,
     });
-    await logAction({
-      action: 'reverter',
-      entity: 'Cheque',
-      entityId: cheque.id,
-      description: `Compensação do cheque #${cheque.check_number} (${cheque.client_name}) revertida no banco ${banco.name}`,
-      before: { status: 'compensado' },
-      after: { status: 'pendente' },
-    });
-    await syncChequeReversal({ ...cheque, status: 'pendente' });
+    if (res.status === 'aplicado') {
+      await logAction({
+        action: 'reverter',
+        entity: 'Cheque',
+        entityId: cheque.id,
+        description: `Compensação do cheque #${cheque.check_number} (${cheque.client_name}) revertida no banco ${banco.name}`,
+        before: { status: 'compensado' },
+        after: { status: 'pendente' },
+      });
+    }
     setSaving(false);
     refresh();
   };

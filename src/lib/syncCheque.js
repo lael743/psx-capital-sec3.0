@@ -15,6 +15,7 @@ import { daysOverdue } from '@/lib/finance';
 import {
   allocateInstallments,
   sumCompensated,
+  computeAmountPaid,
   computeBalanceDue,
   computeOperationStatus,
   computeRealizedProfit,
@@ -43,22 +44,29 @@ async function syncClientTotals(clientId, opId, totalPaidForOp) {
  */
 async function applyOperationState(op, allCheques, excludeChequeId) {
   const installment_schedule = allocateInstallments(op.installment_schedule, allCheques, excludeChequeId);
-  const totalCompensado = sumCompensated(allCheques, excludeChequeId);
-  const balance_due = computeBalanceDue(op.total_receivable, totalCompensado);
+  const totalCheques = sumCompensated(allCheques, excludeChequeId);
+
+  // `amount_paid` acumula cheques compensados E pagamentos independentes
+  // (registro manual, baixa de lançamento, Asaas). Recalcular o campo inteiro a
+  // partir dos cheques APAGARIA esses pagamentos — era o defeito do estorno.
+  // Aplicamos apenas a DIFERENÇA da parcela de cheques.
+  const amount_paid = computeAmountPaid(op, totalCheques);
+  const balance_due = computeBalanceDue(op.total_receivable, amount_paid);
   const isQuitado = balance_due <= 0.01;
 
   const status = computeOperationStatus(op, isQuitado, daysOverdue(op.due_date));
-  const realized_profit = computeRealizedProfit(op, totalCompensado, isQuitado);
+  const realized_profit = computeRealizedProfit(op, amount_paid, isQuitado);
 
   await base44.entities.Operation.update(op.id, {
-    amount_paid: totalCompensado,
+    amount_paid,
+    cheques_compensados_total: totalCheques,
     balance_due,
     status,
     realized_profit,
     installment_schedule,
   });
 
-  await syncClientTotals(op.client_id, op.id, totalCompensado);
+  await syncClientTotals(op.client_id, op.id, amount_paid);
 }
 
 async function loadOperation(operationId) {

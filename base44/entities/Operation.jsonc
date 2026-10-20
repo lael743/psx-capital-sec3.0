@@ -167,6 +167,11 @@
       "type": "number",
       "default": 0
     },
+    "cheques_compensados_total": {
+      "type": "number",
+      "default": 0,
+      "description": "Total de cheques compensados j\u00e1 refletido em amount_paid. Permite recalcular a parcela dos cheques por DIFEREN\u00c7A, sem sobrescrever pagamentos independentes (Asaas, baixa manual). Ver computeAmountPaid em src/lib/chequeCore.js."
+    },
     "balance_due": {
       "type": "number",
       "description": "Saldo devedor"
