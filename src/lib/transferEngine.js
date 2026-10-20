@@ -31,6 +31,10 @@
 import {
   applyBankDelta,
   claimBankEvent,
+  liberarReivindicacaoVerificada,
+  classificarReivindicacao,
+  metaDaReivindicacao,
+  temReivindicacao,
   planoDePernas,
   planoDeEstorno,
   validarTransferencia,
@@ -121,21 +125,22 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
    * no seu próprio documento, ambas venciam e o lançamento duplicava. O banco
    * tem `id` único, então o CAS arbitra entre todas as execuções.
    */
-  async function reivindicarLancamento(perna) {
+  async function reivindicarLancamento(perna, owner) {
     return claimBankEvent({
       store: bancoStore,
       bankId: perna.bankId,
       claimKey: perna.sourceId,
+      owner,
     });
   }
 
-  async function garantirLancamento({ transferId, perna, amount, date, description, fromName, toName }) {
+  async function garantirLancamento({ transferId, perna, amount, date, description, fromName, toName, owner }) {
     const origem = { source_type: SOURCE_TRANSFERENCIA, source_id: perna.sourceId };
 
     const existentes = lista(await cashflowStore.filter(origem));
     if (existentes.length > 0) return { status: 'existente', id: existentes[0].id };
 
-    if (!(await reivindicarLancamento(perna))) {
+    if (!(await reivindicarLancamento(perna, owner))) {
       const relidos = lista(await cashflowStore.filter(origem));
       return relidos.length > 0
         ? { status: 'existente', id: relidos[0].id }
@@ -197,7 +202,7 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
 
       // 2. Lançamento: idempotente pela origem, reivindicado por CAS.
       const lanc = await garantirLancamento({
-        transferId: id, perna, amount: valor, date, description: desc, fromName, toName,
+        transferId: id, perna, amount: valor, date, description: desc, fromName, toName, owner: userEmail,
       });
       if (lanc.id) await marcarPerna(diarioId, perna.leg, { cashflow_id: lanc.id });
 
@@ -272,6 +277,7 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
         description: `Estorno — ${fromName} → ${toName}`,
         fromName,
         toName,
+        owner: userEmail,
       });
       if (lanc.id) await marcarPerna(estornoDoc.id, perna.leg, { cashflow_id: lanc.id, banco: efeito.status });
       resultados.push({ leg: perna.leg, banco: efeito.status, lancamento: lanc.status });
@@ -309,10 +315,231 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
     });
   }
 
+  /** Leitura do banco, quando o store oferece `get`. */
+  async function lerBanco(id) {
+    if (!id || typeof bancoStore.get !== 'function') return null;
+    return bancoStore.get(id);
+  }
+
+  /**
+   * D3.2 — Inspeção DETALHADA do estado de recuperação, por perna.
+   *
+   * Junta o que está espalhado por três documentos (diário, banco, caixa) e
+   * devolve, por perna: saldo aplicado, existência real do lançamento,
+   * reivindicação presente, DONO, instante de aquisição, idade e veredito.
+   *
+   * Somente leitura: não libera, não cria, não corrige.
+   */
+  async function inspecionarTransferencia({ transferId, agora }) {
+    const doc = await diarioExistente(transferId);
+    if (!doc) throw new Error('Transferência não encontrada');
+
+    const plano = planoDePernas({
+      transferId: doc.transfer_id,
+      fromBankId: doc.from_bank_id,
+      toBankId: doc.to_bank_id,
+      amount: Number(doc.amount),
+    });
+
+    const pernas = [];
+    for (const perna of plano) {
+      const marcada = (doc.legs || {})[perna.leg] || {};
+      const saldoAplicado = marcada.banco === 'aplicado' || marcada.banco === 'ja_aplicado';
+      const lancamentos = lista(await cashflowStore.filter({ source_id: perna.sourceId }));
+      const banco = await lerBanco(perna.bankId);
+      const reivindicada = banco ? temReivindicacao(banco, perna.sourceId) : false;
+      const meta = banco ? metaDaReivindicacao(banco, perna.sourceId) : null;
+
+      const veredito = classificarReivindicacao({
+        reivindicada,
+        lancamentoExiste: lancamentos.length > 0,
+        saldoAplicado,
+        adquiridaEm: meta ? meta.em : null,
+        agora,
+      });
+
+      pernas.push({
+        leg: perna.leg,
+        bank_id: perna.bankId,
+        saldo_aplicado: saldoAplicado,
+        cashflow_id_marcado: marcada.cashflow_id || null,
+        lancamento_id: lancamentos.length > 0 ? lancamentos[0].id : null,
+        reivindicacao: {
+          presente: reivindicada,
+          owner: meta ? meta.owner : null,
+          em: meta ? meta.em : null,
+        },
+        ...veredito,
+      });
+    }
+
+    return {
+      transferId: doc.transfer_id,
+      status: doc.status || 'pendente',
+      duplicado: Boolean(doc.duplicado),
+      pernas,
+      orfas: pernas.filter((p) => p.estado === 'orfã_confirmada').length,
+    };
+  }
+
+  /**
+   * D3.2 — Recupera reivindicações órfãs SEM tocar em saldo.
+   *
+   * Regras que este fluxo respeita:
+   *  · NUNCA chama `applyBankDelta`: reaplicar saldo histórico é proibido. A
+   *    recuperação só cria o efeito secundário que falta.
+   *  · Idade sozinha não libera. Exige `confirmar` e, além disso, reivindicação
+   *    fora da janela de suspeita — ou `forcar` explícito, que ainda assim
+   *    continua conferindo a ausência do lançamento.
+   *  · Antes de liberar, `liberarReivindicacaoVerificada` confere se o
+   *    lançamento já existe; se existir, não libera e o vínculo é apenas
+   *    registrado no diário.
+   *  · Recuperação concorrente não duplica: quem criar o lançamento é decidido
+   *    pelo compare-and-swap da reivindicação, não pela ordem de término.
+   */
+  async function recuperarLancamentosOrfaos({ transferId, confirmar, forcar, agora, userEmail }) {
+    const doc = await diarioExistente(transferId);
+    if (!doc) throw new Error('Transferência não encontrada');
+
+    if (doc.status === 'estornada' || doc.status === 'cancelada') {
+      return { transferId, status: doc.status, acoes: [], motivo: 'diário encerrado: nada a recuperar' };
+    }
+
+    const valor = Number(doc.amount);
+    const fromName = doc.from_bank_name || '';
+    const toName = doc.to_bank_name || '';
+    const plano = planoDePernas({
+      transferId: doc.transfer_id,
+      fromBankId: doc.from_bank_id,
+      toBankId: doc.to_bank_id,
+      amount: valor,
+    });
+
+    const inspecao = await inspecionarTransferencia({ transferId, agora });
+    const acoes = [];
+
+    for (const p of inspecao.pernas) {
+      const perna = plano.find((x) => x.leg === p.leg);
+
+      // O lançamento existe: nada a criar. No máximo reconhece o vínculo no
+      // diário — o que faltava era só o marcador, não o efeito.
+      if (p.estado === 'efeito_ja_presente') {
+        if (!p.cashflow_id_marcado && p.lancamento_id) {
+          await marcarPerna(doc.id, p.leg, { cashflow_id: p.lancamento_id });
+          acoes.push({ leg: p.leg, acao: 'marcador_reconciliado', lancamento_id: p.lancamento_id });
+        } else {
+          acoes.push({ leg: p.leg, acao: 'nada_a_fazer' });
+        }
+        continue;
+      }
+
+      // Duas situações são recuperáveis, e só elas:
+      //  · órfã confirmada — reivindicação presente e sem lançamento;
+      //  · perna já liberada — sem reivindicação, saldo aplicado e sem
+      //    lançamento (o processo morreu, alguém liberou e ninguém recriou).
+      const orfa = p.estado === 'orfã_confirmada';
+      const jaLiberada = p.estado === 'sem_reivindicacao' && p.saldo_aplicado && !p.lancamento_id;
+
+      // Reivindicação retida SEM saldo aplicado não se resolve por aqui: criar o
+      // lançamento registraria um movimento de caixa sem o débito/crédito
+      // bancário correspondente. Esse caso exige `recuperarTransferencia`, que
+      // aplica o saldo (idempotente) e só depois cria o lançamento.
+      if (orfa && !p.saldo_aplicado) {
+        acoes.push({
+          leg: p.leg,
+          acao: 'requer_recuperacao_completa',
+          motivo: 'Saldo não aplicado nesta perna: use recuperarTransferencia, que aplica o saldo antes',
+        });
+        continue;
+      }
+
+      if (!orfa && !jaLiberada) {
+        acoes.push({ leg: p.leg, acao: 'nada_a_fazer', motivo: p.motivo });
+        continue;
+      }
+
+      if (!confirmar) {
+        acoes.push({
+          leg: p.leg,
+          acao: 'requer_confirmacao',
+          owner: p.reivindicacao.owner,
+          em: p.reivindicacao.em,
+          idade_ms: p.idadeMs,
+          idade_suspeita: p.idade_suspeita,
+        });
+        continue;
+      }
+
+      if (orfa) {
+        if (!p.idade_suspeita && !forcar) {
+          acoes.push({ leg: p.leg, acao: 'aguardar_idade', idade_ms: p.idadeMs });
+          continue;
+        }
+
+        const liberacao = await liberarReivindicacaoVerificada({
+          bancoStore,
+          cashflowStore,
+          bankId: perna.bankId,
+          claimKey: perna.sourceId,
+          sourceType: SOURCE_TRANSFERENCIA,
+          observado: p.reivindicacao.presente
+            ? { chave: perna.sourceId, owner: p.reivindicacao.owner, em: p.reivindicacao.em }
+            : null,
+        });
+
+        if (!liberacao.liberada) {
+          acoes.push({ leg: p.leg, acao: 'liberacao_recusada', motivo: liberacao.motivo });
+          if (liberacao.motivo === 'efeito_ja_aplicado' && liberacao.lancamento_id) {
+            await marcarPerna(doc.id, p.leg, { cashflow_id: liberacao.lancamento_id });
+          }
+          continue;
+        }
+      }
+
+      const lanc = await garantirLancamento({
+        transferId: doc.transfer_id,
+        perna,
+        amount: valor,
+        date: doc.date,
+        description: doc.description,
+        fromName,
+        toName,
+        owner: userEmail,
+      });
+      if (lanc.id) await marcarPerna(doc.id, p.leg, { cashflow_id: lanc.id });
+
+      acoes.push({
+        leg: p.leg,
+        acao: lanc.status === 'pendente' ? 'lancamento_pendente' : 'lancamento_recriado',
+        lancamento: lanc.status,
+        lancamento_id: lanc.id || null,
+      });
+    }
+
+    // Reconcilia o status com o que existe de FATO — nunca com o que se esperava.
+    const depois = await inspecionarTransferencia({ transferId, agora });
+    const completo = depois.pernas.every((p) => p.saldo_aplicado && p.lancamento_id);
+    if (completo) {
+      await diarioStore.updateWhere(
+        { id: doc.id, status: { $ne: 'estornada' } },
+        { $set: { status: 'aplicada' } }
+      );
+    }
+
+    return {
+      transferId: doc.transfer_id,
+      status: completo ? 'aplicada' : depois.status,
+      acoes,
+      pernas: depois.pernas,
+    };
+  }
+
   return {
     executarTransferencia,
     estornarTransferencia,
     recuperarTransferencia,
+    recuperarLancamentosOrfaos,
+    inspecionarTransferencia,
     diarioExistente,
     diagnosticar: diagnosticoDe,
   };

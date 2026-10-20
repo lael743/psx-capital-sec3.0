@@ -52,7 +52,29 @@
       "items": {
         "type": "string"
       },
-      "description": "Chaves de evento cujo efeito secund\u00e1rio (lan\u00e7amento em CashFlow) j\u00e1 foi REIVINDICADO por uma execu\u00e7\u00e3o. \u00c9 o CAS que decide quem cria o lan\u00e7amento: como o Banco tem id \u00fanico e o di\u00e1rio de transfer\u00eancia n\u00e3o, \u00e9 aqui que a exclusividade realmente existe quando a cria\u00e7\u00e3o concorrente gerou dois di\u00e1rios. Lista (e n\u00e3o mapa) porque a plataforma rejeita caminho pontilhado em campo ausente do documento. N\u00c3O expira sozinha: uma reivindica\u00e7\u00e3o \u00f3rf\u00e3 exige liberarReivindicacao expl\u00edcito. Ver src/lib/bankLedger.js."
+      "description": "Chaves de evento cujo efeito secund\u00e1rio (lan\u00e7amento em CashFlow) j\u00e1 foi REIVINDICADO por uma execu\u00e7\u00e3o. \u00c9 o CAS que decide quem cria o lan\u00e7amento: como o Banco tem id \u00fanico e o di\u00e1rio de transfer\u00eancia n\u00e3o, \u00e9 aqui que a exclusividade realmente existe quando a cria\u00e7\u00e3o concorrente gerou dois di\u00e1rios. Lista (e n\u00e3o mapa) porque a plataforma rejeita caminho pontilhado em campo ausente do documento. N\u00c3O expira sozinha: uma reivindica\u00e7\u00e3o \u00f3rf\u00e3 s\u00f3 \u00e9 liberada por liberarReivindicacaoVerificada, depois de conferido que o lan\u00e7amento n\u00e3o existe. Ver src/lib/bankLedger.js."
+    },
+    "ledger_claim_meta": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "chave": {
+            "type": "string",
+            "description": "A mesma chave gravada em ledger_claims."
+          },
+          "owner": {
+            "type": "string",
+            "description": "Identidade de quem adquiriu a reivindica\u00e7\u00e3o (e-mail do solicitante ou identificador da execu\u00e7\u00e3o)."
+          },
+          "em": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Instante ISO de aquisi\u00e7\u00e3o. Serve para DIAGN\u00d3STICO de idade \u2014 nunca como gatilho de libera\u00e7\u00e3o autom\u00e1tica."
+          }
+        }
+      },
+      "description": "D3.2 \u2014 metadados de cada reivindica\u00e7\u00e3o em ledger_claims (propriet\u00e1rio e instante), gravados na MESMA escrita at\u00f4mica do $push da chave. D\u00e3o dono e hor\u00e1rio \u00e0 reivindica\u00e7\u00e3o e permitem liberar por compare-and-swap no metadado observado: uma libera\u00e7\u00e3o s\u00f3 remove a aquisi\u00e7\u00e3o que ela realmente viu, nunca uma rec\u00e9m-adquirida por outra execu\u00e7\u00e3o. Uma reivindica\u00e7\u00e3o sem metadado \u00e9 legada (anterior \u00e0 D3.2) e \u00e9 tratada como n\u00e3o identificada. Ver src/lib/bankLedger.js."
     },
     "current_balance": {
       "type": "number",

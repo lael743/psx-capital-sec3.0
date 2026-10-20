@@ -44,6 +44,35 @@ async function atualizarStatusLancamento(client: any, lancamentoId: string) {
   await client.entities.LancamentoInterno.update(lancamentoId, { status });
 }
 
+/**
+ * D3.2 — Ajusta a obrigação por COMPARE-AND-SWAP.
+ *
+ * Relê o documento, recalcula com a MESMA fórmula e só escreve se o
+ * `valor_pago` lido continuar sendo o vigente. Antes, dois pagamentos
+ * simultâneos na mesma parcela partiam da mesma leitura e o segundo
+ * sobrescrevia o primeiro — uma das baixas desaparecia do contador.
+ *
+ * Nenhuma fórmula comercial foi alterada: os cálculos são exatamente os que
+ * existiam, apenas reaplicados sobre o valor vigente quando houve corrida.
+ */
+async function ajustarObrigacao(client: any, obrigacaoId: string, calcular: (obrigacao: any) => any) {
+  for (let tentativa = 0; tentativa < 3; tentativa += 1) {
+    const atual = await client.entities.ObrigacaoInterna.get(obrigacaoId);
+    if (!atual) throw new Error('Parcela não encontrada');
+
+    const lido = Number(atual.valor_pago) || 0;
+    const patch = calcular(atual);
+    // Campo ausente não casa com `{ valor_pago: 0 }`: a guarda cobre os dois casos.
+    const guarda: any = lido === 0
+      ? { id: obrigacaoId, $or: [{ valor_pago: 0 }, { valor_pago: { $exists: false } }] }
+      : { id: obrigacaoId, valor_pago: lido };
+
+    const res = await client.entities.ObrigacaoInterna.updateMany(guarda, { $set: patch });
+    if ((Number(res?.updated) || 0) > 0) return { ...atual, ...patch };
+  }
+  throw new Error('A parcela foi alterada por outra operação durante o pagamento. Recarregue e tente novamente.');
+}
+
 async function registrar(client: any, user: any, body: any) {
   const {
     obrigacao_id,
@@ -105,20 +134,28 @@ async function registrar(client: any, user: any, body: any) {
     idempotency_key: idempotency_key || '',
   });
 
-  const novoPago = Math.round(((Number(obrigacao.valor_pago) || 0) + valorNum) * 100) / 100;
-  const novoSaldo = Math.round(((Number(obrigacao.valor) || 0) - novoPago) * 100) / 100;
-  const status = novoSaldo <= 0.005 ? 'pago' : 'parcialmente_pago';
-  const antecipada = !!(obrigacao.vencimento && data_pagamento < obrigacao.vencimento);
-
-  await client.entities.ObrigacaoInterna.update(obrigacao_id, {
-    valor_pago: novoPago,
-    saldo: Math.max(0, novoSaldo),
-    status,
-    data_pagamento,
-    conta_pagamento_id: conta_id || '',
-    conta_pagamento_nome: conta?.nome || '',
-    antecipada,
-  });
+  let obrigacaoAtualizada: any;
+  try {
+    obrigacaoAtualizada = await ajustarObrigacao(client, obrigacao_id, (atual: any) => {
+      const pago = Math.round(((Number(atual.valor_pago) || 0) + valorNum) * 100) / 100;
+      const saldoCalculado = Math.round(((Number(atual.valor) || 0) - pago) * 100) / 100;
+      return {
+        valor_pago: pago,
+        saldo: Math.max(0, saldoCalculado),
+        status: saldoCalculado <= 0.005 ? 'pago' : 'parcialmente_pago',
+        data_pagamento,
+        conta_pagamento_id: conta_id || '',
+        conta_pagamento_nome: conta?.nome || '',
+        antecipada: !!(atual.vencimento && data_pagamento < atual.vencimento),
+      };
+    });
+  } catch (erro: any) {
+    // A parcela mudou no meio do caminho. Desfaz o registro criado por ESTA
+    // execução para não deixar pagamento órfão sem contrapartida na parcela.
+    // Nenhum saldo bancário foi tocado ainda.
+    await client.entities.PagamentoInterno.delete(pagamento.id);
+    throw erro;
+  }
 
   // Efeito financeiro no fluxo central (idempotente por origem)
   const bankId = conta && conta.tipo === 'conta_bancaria' ? (conta.banco_id || '') : '';
@@ -164,8 +201,8 @@ async function registrar(client: any, user: any, body: any) {
   return Response.json({
     success: true,
     pagamento_id: pagamento.id,
-    status,
-    saldo: Math.max(0, novoSaldo),
+    status: obrigacaoAtualizada.status,
+    saldo: obrigacaoAtualizada.saldo,
     cashflow: cf.status,
   });
 }
@@ -179,29 +216,28 @@ async function estornar(client: any, user: any, body: any) {
   if (!pagamento) throw new Error('Pagamento não encontrado');
   if (pagamento.estornado) throw new Error('Este pagamento já foi estornado');
 
-  await client.entities.PagamentoInterno.update(pagamento_id, {
-    estornado: true,
-    estorno_motivo: motivo,
-    estorno_data: new Date().toISOString(),
-  });
+  // D3.2 — O próprio flag de estorno é o mutex da reversão: antes era
+  // ler-conferir-escrever, e duas execuções simultâneas passavam as duas.
+  const marcoEstorno = await client.entities.PagamentoInterno.updateMany(
+    { id: pagamento_id, estornado: { $ne: true } },
+    { $set: { estornado: true, estorno_motivo: motivo, estorno_data: new Date().toISOString() } }
+  );
+  if (!(Number(marcoEstorno?.updated) || 0)) throw new Error('Este pagamento já foi estornado');
 
   const obrigacao = pagamento.obrigacao_id
     ? await safeGet(client, 'ObrigacaoInterna', pagamento.obrigacao_id)
     : null;
 
   if (obrigacao) {
-    const novoPago = Math.max(0, Math.round(((Number(obrigacao.valor_pago) || 0) - (Number(pagamento.valor_pago) || 0)) * 100) / 100);
-    const novoSaldo = Math.round(((Number(obrigacao.valor) || 0) - novoPago) * 100) / 100;
     const hoje = new Date().toISOString().slice(0, 10);
-    let status = 'a_vencer';
-    if (novoSaldo <= 0.005) status = 'pago';
-    else if (novoPago > 0) status = 'parcialmente_pago';
-    else if (obrigacao.vencimento && obrigacao.vencimento < hoje) status = 'vencido';
-
-    await client.entities.ObrigacaoInterna.update(obrigacao.id, {
-      valor_pago: novoPago,
-      saldo: Math.max(0, novoSaldo),
-      status,
+    await ajustarObrigacao(client, obrigacao.id, (atual: any) => {
+      const pago = Math.max(0, Math.round(((Number(atual.valor_pago) || 0) - (Number(pagamento.valor_pago) || 0)) * 100) / 100);
+      const saldoCalculado = Math.round(((Number(atual.valor) || 0) - pago) * 100) / 100;
+      let status = 'a_vencer';
+      if (saldoCalculado <= 0.005) status = 'pago';
+      else if (pago > 0) status = 'parcialmente_pago';
+      else if (atual.vencimento && atual.vencimento < hoje) status = 'vencido';
+      return { valor_pago: pago, saldo: Math.max(0, saldoCalculado), status };
     });
   }
 
@@ -259,12 +295,18 @@ async function cancelarParcela(client: any, user: any, body: any) {
   if (obrigacao.status === 'pago') throw new Error('Parcela já paga não pode ser cancelada');
   if ((Number(obrigacao.valor_pago) || 0) > 0) throw new Error('Parcela com pagamento registrado não pode ser cancelada');
 
-  await client.entities.ObrigacaoInterna.update(obrigacao_id, {
-    status: 'cancelado',
-    motivo_cancelamento: motivo,
-    cancelado_por: user?.email || '',
-    saldo: 0,
-  });
+  // D3.2 — guarda o cancelamento contra pagamento que entre no meio do caminho.
+  const resCancel = await client.entities.ObrigacaoInterna.updateMany(
+    {
+      id: obrigacao_id,
+      status: { $ne: 'cancelado' },
+      $or: [{ valor_pago: 0 }, { valor_pago: { $exists: false } }],
+    },
+    { $set: { status: 'cancelado', motivo_cancelamento: motivo, cancelado_por: user?.email || '', saldo: 0 } }
+  );
+  if (!(Number(resCancel?.updated) || 0)) {
+    throw new Error('A parcela foi alterada por outra operação durante o cancelamento. Recarregue e tente novamente.');
+  }
 
   await atualizarStatusLancamento(client, obrigacao.lancamento_id);
   await logAudit(

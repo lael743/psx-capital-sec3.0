@@ -56,15 +56,37 @@ export const LEDGER_KEYS_FIELD = 'applied_ledger_keys';
  * funciona mesmo com o campo ausente (é o mesmo mecanismo já usado com sucesso
  * em `applied_ledger_keys`). Verificado na plataforma, não presumido.
  *
- * CUSTO DESSA ESCOLHA: sem carimbo de tempo, a reivindicação NÃO expira
- * sozinha. Se um processo morrer entre reivindicar e criar o lançamento, aquela
- * perna fica sem lançamento até alguém chamar `liberarReivindicacao`. O saldo
- * não é afetado e o estado é DETECTÁVEL (`diagnosticarTransferencia`).
+ * CUSTO DESSA ESCOLHA: sem carimbo de tempo dentro da própria chave, a
+ * reivindicação NÃO expira sozinha. O dono e o instante de aquisição ficam em
+ * `CLAIM_META_FIELD`, gravados na MESMA escrita — é o que permite diagnóstico
+ * (`classificarReivindicacao`) e liberação segura
+ * (`liberarReivindicacaoVerificada`). O saldo nunca é afetado.
  */
 export const CLAIMS_FIELD = 'ledger_claims';
 
-/** Janela de validade de uma reivindicação de lançamento (ms). */
-export const TTL_REIVINDICACAO_MS = 5 * 60 * 1000;
+/**
+ * D3.2 — METADADOS de cada reivindicação: dono e instante de aquisição.
+ *
+ * Gravados com `$push` no MESMO update da chave em `CLAIMS_FIELD`, então uma
+ * reivindicação nunca existe sem metadado nas aquisições novas: se o
+ * compare-and-swap da chave perde, o update inteiro não é aplicado e nenhum
+ * metadado órfão sobra.
+ *
+ * O metadado é também a GUARDA da liberação: `$pull` com filtro
+ * `{ ledger_claim_meta: <metadado observado> }` só remove se aquela aquisição
+ * exata ainda estiver lá. Sem isso, liberar uma reivindicação antiga poderia
+ * apagar a reivindicação NOVA de outra execução, e as duas criariam o mesmo
+ * lançamento. Verificado na plataforma: metadado divergente devolve `updated: 0`.
+ */
+export const CLAIM_META_FIELD = 'ledger_claim_meta';
+
+/**
+ * Idade a partir da qual uma reivindicação é SINALIZADA como suspeita de
+ * abandono. Serve para diagnóstico e para exigir confirmação — NUNCA libera
+ * nada sozinha. Idade não prova que o processo morreu, e liberar cedo permite
+ * que outra execução crie o lançamento em paralelo à original.
+ */
+export const IDADE_SUSPEITA_MS = 5 * 60 * 1000;
 
 /** Categoria de caixa das pernas de transferência. */
 export const CATEGORIA_TRANSFERENCIA = 'transferencia_interna';
@@ -133,36 +155,189 @@ export async function applyBankDelta({ store, bankId, delta, eventKey }) {
  * lançamento em `CashFlow`) no documento do banco.
  *
  * Compare-and-swap: só uma execução — qualquer que seja o diário que ela
- * esteja usando — recebe `true`. A reivindicação expira, então uma execução
- * morta não bloqueia o evento indefinidamente.
+ * esteja usando — recebe `true`. A chave e o metadado (dono + instante) entram
+ * na MESMA escrita, então uma reivindicação nova nunca fica sem identificação.
  *
+ * NÃO expira: uma execução morta deixa a chave gravada. A saída é
+ * `liberarReivindicacaoVerificada`, que confere o efeito antes de remover.
+ *
+ * @param {Object} p
+ * @param {string} [p.owner] identificação de quem reivindica (e-mail, execução)
+ * @param {string} [p.agora] instante ISO, injetável para teste
  * @returns {Promise<boolean>} true se esta execução ganhou o direito de agir
  */
-export async function claimBankEvent({ store, bankId, claimKey }) {
+export async function claimBankEvent({ store, bankId, claimKey, owner, agora }) {
   if (!bankId) return false;
   if (!claimKey) throw new Error('[BankLedger] claimKey é obrigatório');
 
   const res = await store.updateWhere(
     { id: bankId, [CLAIMS_FIELD]: { $ne: claimKey } },
-    { $push: { [CLAIMS_FIELD]: claimKey } }
+    {
+      $push: {
+        [CLAIMS_FIELD]: claimKey,
+        [CLAIM_META_FIELD]: {
+          chave: claimKey,
+          owner: owner ? String(owner) : 'desconhecido',
+          em: agora || new Date().toISOString(),
+        },
+      },
+    }
   );
 
   return (Number(res && res.updated) || 0) > 0;
 }
 
+/** A chave está reivindicada neste documento de banco? (puro) */
+export function temReivindicacao(doc, claimKey) {
+  const chaves = doc && Array.isArray(doc[CLAIMS_FIELD]) ? doc[CLAIMS_FIELD] : [];
+  return chaves.includes(claimKey);
+}
+
+/** Metadado da reivindicação neste documento de banco, ou null. (puro) */
+export function metaDaReivindicacao(doc, claimKey) {
+  const metas = doc && Array.isArray(doc[CLAIM_META_FIELD]) ? doc[CLAIM_META_FIELD] : [];
+  return metas.find((m) => m && m.chave === claimKey) || null;
+}
+
 /**
- * Libera uma reivindicação órfã (processo morto entre reivindicar e concluir).
- * Operação ADMINISTRATIVA e explícita: liberar antes da hora permite que outra
- * execução crie o lançamento — só faça isso quando a perna estiver realmente
- * incompleta (sem `cashflow_id`).
+ * Classifica o estado de uma reivindicação. PURO: recebe o que foi lido e
+ * devolve o veredito — não libera, não escreve, não decide por idade.
+ *
+ * Estados possíveis entre reivindicar, aplicar saldo e criar o lançamento:
+ *
+ *  1. sem_reivindicacao      — ninguém reivindicou; o lançamento pode ser
+ *                              criado direto (nada a liberar).
+ *  2. efeito_ja_presente     — o lançamento JÁ existe. A reivindicação está
+ *                              CUMPRIDA: liberá-la deixaria outra execução
+ *                              abrir um segundo lançamento. Nunca liberável.
+ *  3. orfã_confirmada        — reivindicada, sem lançamento. É a única
+ *                              candidata a recuperação, e ainda assim exige
+ *                              confirmação explícita.
+ *
+ * `idadeSuspeita` é AVISO, não permissão: uma reivindicação antiga continua
+ * exigindo confirmação, e uma recente continua exigindo confirmação.
+ */
+export function classificarReivindicacao({
+  reivindicada,
+  lancamentoExiste,
+  saldoAplicado,
+  adquiridaEm,
+  agora,
+  limiarMs = IDADE_SUSPEITA_MS,
+}) {
+  const instante = agora ? new Date(agora).getTime() : Date.now();
+  const adquirida = adquiridaEm ? new Date(adquiridaEm).getTime() : NaN;
+  const idadeMs = Number.isFinite(adquirida) ? Math.max(0, instante - adquirida) : null;
+  const idadeSuspeita = idadeMs != null && idadeMs > limiarMs;
+
+  if (lancamentoExiste) {
+    return {
+      estado: 'efeito_ja_presente',
+      liberavel: false,
+      idadeMs,
+      idade_suspeita: idadeSuspeita,
+      motivo: 'O lançamento já existe: a reivindicação está cumprida e não deve ser liberada',
+    };
+  }
+  if (!reivindicada) {
+    return {
+      estado: 'sem_reivindicacao',
+      liberavel: false,
+      idadeMs: null,
+      idade_suspeita: false,
+      motivo: 'Nenhuma reivindicação registrada: o lançamento pode ser criado direto',
+    };
+  }
+  return {
+    estado: 'orfã_confirmada',
+    liberavel: true,
+    idadeMs,
+    idade_suspeita: idadeSuspeita,
+    motivo: saldoAplicado
+      ? 'Saldo aplicado, lançamento ausente e reivindicação sem efeito: órfã confirmada'
+      : 'Saldo não aplicado, lançamento ausente e reivindicação presente: órfã confirmada',
+  };
+}
+
+/**
+ * Libera uma reivindicação pela chave, SEM conferir nada.
+ *
+ * ATENÇÃO: é o passo MECÂNICO, não a recuperação. Usar isto em fluxo de
+ * recuperação permite apagar a reivindicação de um processo vivo e duplicar o
+ * lançamento. A recuperação usa `liberarReivindicacaoVerificada`.
  */
 export async function liberarReivindicacao({ store, bankId, claimKey }) {
   if (!bankId || !claimKey) return false;
   const res = await store.updateWhere(
     { id: bankId },
-    { $pull: { [CLAIMS_FIELD]: claimKey } }
+    { $pull: { [CLAIMS_FIELD]: claimKey, [CLAIM_META_FIELD]: { chave: claimKey } } }
   );
   return (Number(res && res.updated) || 0) > 0;
+}
+
+/** Lê o documento do banco (quando o store oferece `get`). */
+async function lerDocumentoBanco(bancoStore, bankId) {
+  if (!bancoStore || typeof bancoStore.get !== 'function' || !bankId) return null;
+  return bancoStore.get(bankId);
+}
+
+/**
+ * D3.2 — Libera uma reivindicação órfã SOMENTE depois de provar que o efeito
+ * secundário não foi aplicado, e removendo apenas a aquisição observada.
+ *
+ * Ordem obrigatória:
+ *  1. Confere se o lançamento já existe (`cashflowStore`). Se existir, NÃO
+ *     libera: a reivindicação está cumprida e liberá-la abriria caminho para um
+ *     segundo lançamento. Devolve `efeito_ja_aplicado` com o id encontrado.
+ *  2. Só então remove a chave — com filtro pelo metadado observado
+ *     (`{ ledger_claim_meta: meta }`), que a plataforma compara por valor. Se
+ *     outra execução reivindicou de novo no meio do caminho, o filtro não casa
+ *     e a liberação é recusada (`reivindicacao_mudou`), preservando a
+ *     aquisição nova.
+ *
+ * NUNCA toca em saldo: nenhum `$inc`, nenhuma reaplicação de evento histórico.
+ */
+export async function liberarReivindicacaoVerificada({
+  bancoStore,
+  cashflowStore,
+  bankId,
+  claimKey,
+  sourceType,
+  observado,
+}) {
+  if (!bankId || !claimKey) return { liberada: false, motivo: 'parametros_invalidos' };
+
+  // 1. O efeito existe? Então a reivindicação é legítima, não órfã.
+  if (cashflowStore && typeof cashflowStore.filter === 'function') {
+    const consulta = sourceType
+      ? { source_id: claimKey, source_type: sourceType }
+      : { source_id: claimKey };
+    const achados = await cashflowStore.filter(consulta);
+    const existentes = Array.isArray(achados) ? achados : (achados && achados.items) || [];
+    if (existentes.length > 0) {
+      return { liberada: false, motivo: 'efeito_ja_aplicado', lancamento_id: existentes[0].id };
+    }
+  }
+
+  const doc = await lerDocumentoBanco(bancoStore, bankId);
+  if (!doc || !temReivindicacao(doc, claimKey)) {
+    return { liberada: false, motivo: 'sem_reivindicacao' };
+  }
+
+  const meta = observado || metaDaReivindicacao(doc, claimKey);
+
+  // 2. Compare-and-swap no metadado: só remove a aquisição que foi observada.
+  //    Reivindicação legada (sem metadado) é liberada apenas pela chave — é o
+  //    que existe para conferir, e o efeito já foi verificado no passo 1.
+  const filtro = meta ? { id: bankId, [CLAIM_META_FIELD]: meta } : { id: bankId };
+  const res = await bancoStore.updateWhere(filtro, {
+    $pull: { [CLAIMS_FIELD]: claimKey, [CLAIM_META_FIELD]: { chave: claimKey } },
+  });
+
+  const updated = Number(res && res.updated) || 0;
+  return updated > 0
+    ? { liberada: true, motivo: 'liberada', sem_metadado: !meta }
+    : { liberada: false, motivo: 'reivindicacao_mudou' };
 }
 
 // ─────────────────────────── regra de transferência ────────────────────────
