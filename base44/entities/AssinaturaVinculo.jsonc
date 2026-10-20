@@ -63,7 +63,14 @@
     "ciclos_pagos": {
       "type": "number",
       "default": 0,
-      "description": "Ciclos j\u00e1 pagos pelo sacado"
+      "description": "Ciclos j\u00e1 pagos pelo sacado. DERIVADO de ciclos_processados \u2014 o contador \u00e9 reconcili\u00e1vel a partir da lista."
+    },
+    "ciclos_processados": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Identidades dos pagamentos (id do Asaas) cujo ciclo j\u00e1 foi contabilizado. \u00c9 gravada na MESMA escrita at\u00f4mica do $inc de ciclos_pagos, por compare-and-swap: uma reentrega do webhook n\u00e3o conta o mesmo ciclo duas vezes, e um contador que ficou atr\u00e1s por falha parcial converge para o tamanho desta lista. Ver base44/functions/asaasWebhook/entry.ts."
     },
     "asaas_subscription_id": {
       "type": "string",

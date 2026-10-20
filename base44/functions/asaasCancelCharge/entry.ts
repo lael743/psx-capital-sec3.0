@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { asaasRequest } from '../../shared/asaas.ts';
+import { markChargeCancelled, atualizarParcelaCondicional } from '../../shared/asaasChargeFlow.js';
 import { secrets } from 'base44:runtime';
 
 Deno.serve(async (req) => {
@@ -30,31 +31,36 @@ Deno.serve(async (req) => {
       try {
         await asaasRequest(`/payments/${inst.asaas_payment_id}`, { method: 'DELETE' }, apiKey);
       } catch (e) {
-        // If already deleted/not found, proceed to clear locally
-        const msg = String(e.message || '');
-        if (!msg.includes('404') && !msg.toLowerCase().includes('not found')) {
-          throw e;
-        }
+        // D1.4 — só um 404 prova que a cobrança já não existe. Antes a decisão
+        // vinha de SUBSTRING da mensagem, o que podia engolir um erro real
+        // (validação, permissão) e limpar o vínculo local como se o
+        // cancelamento tivesse sido feito.
+        if (Number(e && e.status) !== 404) throw e;
       }
 
       // Clear charge fields so the parcela can be regenerated later.
       // D1.3 — escrita ATÔMICA por parcela (`$set` pontilhado): regravar o
       // array inteiro podia apagar o pagamento de OUTRA parcela da mesma
       // operação, gravado entre a leitura e a escrita.
+      //
+      // D1.4 — a limpeza é CONDICIONADA ao identificador observado: se a
+      // parcela já aponta para outra cobrança (reemissão concorrente), o
+      // vínculo novo não é apagado por um cancelamento do vínculo antigo.
       const base = `installment_schedule.${idx}`;
-      await base44.entities.Operation.updateMany(
-        { id: operation_id },
-        {
-          $set: {
-            [`${base}.asaas_payment_id`]: '',
-            [`${base}.asaas_payment_status`]: 'deleted',
-            [`${base}.asaas_invoice_url`]: '',
-            [`${base}.asaas_pix_qrcode`]: '',
-            [`${base}.asaas_boleto_line`]: '',
-            [`${base}.asaas_billing_type`]: inst.asaas_billing_type || '',
-          },
-        }
-      );
+      await atualizarParcelaCondicional(base44.entities, operation_id, idx, inst.asaas_payment_id, {
+        [`${base}.asaas_payment_id`]: '',
+        [`${base}.asaas_payment_status`]: 'deleted',
+        [`${base}.asaas_invoice_url`]: '',
+        [`${base}.asaas_pix_qrcode`]: '',
+        [`${base}.asaas_boleto_line`]: '',
+        [`${base}.asaas_billing_type`]: inst.asaas_billing_type || '',
+      });
+
+      // D1.4 — a INTENÇÃO desta parcela passa a `cancelada`. É isto que libera
+      // uma reemissão legítima e, ao mesmo tempo, garante que ela será uma
+      // NOVA geração (identidade nova), e não uma duplicata da cobrança que
+      // acabou de ser cancelada.
+      await markChargeCancelled(base44, operation_id, idx, new Date().toISOString());
 
       return Response.json({
         success: true,

@@ -161,7 +161,7 @@
       "items": {
         "type": "object"
       },
-      "description": "Agenda de parcelas. ATEN\u00c7\u00c3O: escritas devem ser POR \u00cdNDICE (`$set` pontilhado em installment_schedule.N.campo), nunca regravando o array inteiro \u2014 regravar causava perda de atualiza\u00e7\u00e3o quando duas parcelas da mesma opera\u00e7\u00e3o eram pagas ao mesmo tempo. Ver D1.3."
+      "description": "Agenda de parcelas. ATEN\u00c7\u00c3O: escritas devem ser POR \u00cdNDICE (`$set` pontilhado em installment_schedule.N.campo), nunca regravando o array inteiro \u2014 regravar causava perda de atualiza\u00e7\u00e3o quando duas parcelas da mesma opera\u00e7\u00e3o eram pagas ao mesmo tempo. Ver D1.3/D1.4."
     },
     "amount_paid": {
       "type": "number",
@@ -189,6 +189,10 @@
     "asaas_lancamentos_ts": {
       "type": "object",
       "description": "Carimbo ISO da reivindica\u00e7\u00e3o do lan\u00e7amento de extrato, por evento (id do pagamento). D\u00e1 PRAZO DE VALIDADE \u00e0 reivindica\u00e7\u00e3o registrada em asaas_lancamentos_gerados: uma execu\u00e7\u00e3o morta entre reivindicar e criar n\u00e3o trava o evento para sempre \u2014 passada a toler\u00e2ncia, a pr\u00f3xima recupera\u00e7\u00e3o retoma. Tamb\u00e9m impede que uma reivindica\u00e7\u00e3o recente seja roubada."
+    },
+    "asaas_intents": {
+      "type": "object",
+      "description": "Mapa das INTEN\u00c7\u00d5ES de emiss\u00e3o de cobran\u00e7a Asaas, chaveado pelo \u00edndice da parcela (ou 'op' quando a cobran\u00e7a \u00e9 da opera\u00e7\u00e3o inteira). Guarda o estado persistente da emiss\u00e3o (solicitando, criada, falha_recuperavel, falha_definitiva, reconciliacao_pendente, cancelada), a identidade est\u00e1vel (intent_key = opera\u00e7\u00e3o + parcela + gera\u00e7\u00e3o), o identificador externo e o hist\u00f3rico de tentativas. Vive na OPERA\u00c7\u00c3O porque a exclusividade exige escrita at\u00f4mica sobre UM documento: a reivindica\u00e7\u00e3o da emiss\u00e3o \u00e9 um compare-and-swap aqui, e \u00e9 isso que impede dois boletos para a mesma parcela. Ver base44/shared/asaasChargeFlow.js."
     },
     "balance_due": {
       "type": "number",

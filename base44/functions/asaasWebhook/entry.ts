@@ -128,20 +128,36 @@ Deno.serve(async (req) => {
           lancamentoPayload,
         });
 
-        if (res.applied) {
-          // $inc em vez de ler-modificar-escrever: sem perda de atualização.
-          await base44.asServiceRole.entities.AssinaturaVinculo.updateMany(
-            { id: vinculo.id },
-            { $inc: { ciclos_pagos: 1 } }
-          );
+        // D1.4 — EFEITO SECUNDÁRIO RECUPERÁVEL.
+        //
+        // O contador de ciclos só era incrementado quando `res.applied` era
+        // verdadeiro, numa escrita SEPARADA do recebimento. Se o processo
+        // morresse entre as duas, a reentrega não corrigia nada: `res.applied`
+        // já era falso (o valor estava contabilizado), então o incremento
+        // nunca acontecia e o ciclo ficava permanentemente atrás.
+        //
+        // Agora o ciclo é reivindicado pela SUA PRÓPRIA identidade — o id do
+        // pagamento — na MESMA escrita do $inc. A guarda `$ne` torna a
+        // reentrega um no-op (updated === 0), e um contador que ficou atrás
+        // converge para o tamanho de `ciclos_processados`.
+        //
+        // Note que o efeito NÃO depende mais de `res.applied`: ele tem a sua
+        // própria condição de idempotência, e por isso sobrevive a uma
+        // reentrega mesmo quando o efeito monetário já estava aplicado.
+        const cicloRes = await base44.asServiceRole.entities.AssinaturaVinculo.updateMany(
+          { id: vinculo.id, ciclos_processados: { $ne: paymentId } },
+          { $inc: { ciclos_pagos: 1 }, $addToSet: { ciclos_processados: paymentId } }
+        );
+
+        if (cicloRes && cicloRes.updated === 1) {
           const vinculoAtual = await base44.asServiceRole.entities.AssinaturaVinculo.get(vinculo.id);
-          updateData.ciclos_pagos = (vinculoAtual && vinculoAtual.ciclos_pagos) || newCiclosPagos;
+          const ciclos = (vinculoAtual && vinculoAtual.ciclos_pagos) || newCiclosPagos;
 
           // Prazo definido: ao atingir o nº de ciclos, encerra a assinatura
           if (
             vinculo.prazo_tipo === 'definido' &&
             vinculo.num_ciclos > 0 &&
-            updateData.ciclos_pagos >= vinculo.num_ciclos &&
+            ciclos >= vinculo.num_ciclos &&
             vinculo.asaas_subscription_id
           ) {
             try {
@@ -156,6 +172,13 @@ Deno.serve(async (req) => {
               }
             }
           }
+        }
+
+        // O contador NÃO entra em updateData: ele é do $inc atômico acima.
+        // Regravá-lo aqui reintroduziria a perda de atualização que a D1.4
+        // acabou de eliminar.
+        if (!res.journal_ok) {
+          console.warn('[asaasWebhook] diário indisponível; recuperação dependerá de reentrega');
         }
       } else if (status === 'overdue') {
         if (operation && operation.status === 'ativo') {

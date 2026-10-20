@@ -1,5 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
-import { recoverEvento } from '../../shared/asaasReceiptFlow.js';
+import { recoverEvento, sweepLancamentosAbandonados } from '../../shared/asaasReceiptFlow.js';
 import {
   needsRecovery,
   classifyEvento,
@@ -60,6 +60,18 @@ Deno.serve(async (req) => {
       }
     }
 
+    // D1.4 — varredura das reivindicações de extrato ABANDONADAS, que a
+    // recuperação acima não alcança quando o diário não pôde ser gravado.
+    // Ela libera a reivindicação e REPORTA; não cria lançamento, porque o
+    // payload vivia no diário ausente e reconstruí-lo seria inventar dado
+    // financeiro. É o ponto explícito de intervenção humana.
+    let lancamentos_orfãos = [];
+    try {
+      lancamentos_orfãos = await sweepLancamentosAbandonados(base44, staleIso, 200);
+    } catch (_) {
+      lancamentos_orfãos = [];
+    }
+
     // Situação após a passagem — o que ainda não pôde ser recuperado.
     const restantes = await base44.asServiceRole.entities.AsaasEvento.filter(
       { status: { $in: ['reivindicado', 'falha', 'em_recuperacao'] } },
@@ -87,6 +99,14 @@ Deno.serve(async (req) => {
         event_key: r.event_key,
         tentativas: r.attempts || 0,
         erro: r.error || '',
+      })),
+      // D1.4 — reivindicações de extrato abandonadas sem diário: a reivindicação
+      // foi liberada para uma reentrega poder recriar o lançamento, mas o caso
+      // fica reportado porque pode exigir reconstrução manual.
+      lancamentos_orfãos: lancamentos_orfãos.map((o) => ({
+        operation_id: o.operation_id,
+        event_key: o.event_key,
+        claimed_at: o.claimed_at,
       })),
     });
   } catch (error) {

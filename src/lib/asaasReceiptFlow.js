@@ -97,12 +97,34 @@ export async function recomputeDerived(base44, operationId) {
   if (!op) return null;
 
   const totalRec = op.total_receivable || 0;
-  const balanceDue = totalRec > 0 ? Math.max(0, totalRec - (op.amount_paid || 0)) : 0;
+  const observado = Number(op.amount_paid) || 0;
+  const balanceDue = totalRec > 0 ? Math.max(0, totalRec - observado) : 0;
 
   const patch = { balance_due: balanceDue };
   if (totalRec > 0 && balanceDue <= 0.01 && op.status !== 'quitado') patch.status = 'quitado';
 
-  await base44.asServiceRole.entities.Operation.update(operationId, patch);
+  // D1.4 — CONVERGÊNCIA DOS DERIVADOS.
+  //
+  // O recálculo é uma função pura de `amount_paid`. Sob dois recebimentos
+  // simultâneos, a recalculação que leu o valor ANTIGO podia gravar DEPOIS da
+  // que leu o valor NOVO — e o saldo (e o status) ficavam errados até alguém
+  // recalcular por acaso. Não há garantia de ordem entre as duas escritas.
+  //
+  // A escrita é condicionada ao valor OBSERVADO. Se `amount_paid` já mudou
+  // desde a leitura, esta recalculação está obsoleta e NÃO escreve nada: quem
+  // mudou o valor faz o próprio recálculo. Assim a última gravação é sempre a
+  // de quem leu o valor mais recente, e o derivado converge por construção.
+  //
+  // `amount_paid` nunca é tocado aqui — só lido. Corrigir um derivado jamais
+  // altera o valor autoritativo.
+  const res = await base44.asServiceRole.entities.Operation.updateMany(
+    { id: operationId, amount_paid: observado },
+    { $set: patch }
+  );
+
+  if (!res || res.updated !== 1) {
+    return { ...op, ...patch, derivados_obsoletos: true };
+  }
   return { ...op, ...patch };
 }
 
@@ -256,11 +278,22 @@ export async function processReceipt(base44, input) {
 
   // O diário é observabilidade e ponto de entrada da recuperação. Sua falha
   // NUNCA impede a contabilização — por isso o try/catch isolado.
+  // D1.4 — o diário é o PONTO DE ENTRADA da recuperação. Perdê-lo em silêncio
+  // significa perder a capacidade de recuperar uma contabilização parcial: os
+  // efeitos seguem sendo idempotentes, mas ninguém sabe que há algo a reparar.
+  // Por isso a criação é tentada DUAS vezes antes de desistir, e o resultado é
+  // REPORTADO ao chamador em vez de engolido.
   let journal = null;
+  let journalOk = true;
   try {
     journal = await openEvento(base44, newEventoRecord({ ...i, key, now }));
   } catch (_) {
-    journal = null;
+    try {
+      journal = await openEvento(base44, newEventoRecord({ ...i, key, now }));
+    } catch (_2) {
+      journal = null;
+      journalOk = false;
+    }
   }
 
   try {
@@ -287,6 +320,7 @@ export async function processReceipt(base44, input) {
       lancamento: lanc.lancamento,
       op,
       evento_id: journal ? journal.id : '',
+      journal_ok: journalOk,
     };
   } catch (e) {
     if (journal) {
@@ -442,5 +476,54 @@ export async function recoverEvento(base44, record, nowIso, staleIso) {
     }
     throw e;
   }
+}
+
+/**
+ * D1.4 — Varredura de reivindicações de extrato ABANDONADAS.
+ *
+ * Cobre exatamente o caso que a recuperação normal NÃO alcança: aquele em que
+ * o diário não pôde ser gravado. Sem linha em AsaasEvento, nenhum laço sobre o
+ * diário vê este evento — mas o próprio documento da operação guarda a prova
+ * de que uma criação de extrato foi reivindicada e nunca concluída.
+ *
+ * A varredura LIBERA a reivindicação, para que uma reentrega do webhook possa
+ * recriar o lançamento, e REPORTA o caso.
+ *
+ * Ela NÃO cria o lançamento. O payload do extrato vivia no diário ausente;
+ * reconstruí-lo a partir do que sobrou seria inventar dados financeiros — e
+ * inventar um lançamento é pior do que admitir que ele falta. Este é,
+ * explicitamente, o ponto em que a intervenção humana é necessária.
+ */
+export async function sweepLancamentosAbandonados(base44, staleIso, limite) {
+  const pagina = await base44.asServiceRole.entities.Operation.filter(
+    { asaas_lancamentos_gerados: { $exists: true } },
+    { limit: limite || 200 }
+  );
+  const ops = (pagina && pagina.items) || pagina || [];
+
+  const orfaos = [];
+  for (const op of ops) {
+    const chaves = Array.isArray(op.asaas_lancamentos_gerados) ? op.asaas_lancamentos_gerados : [];
+    if (chaves.length === 0) continue;
+    const ts = op.asaas_lancamentos_ts || {};
+
+    for (const key of chaves) {
+      const carimbo = ts[key];
+      // Sem carimbo (reivindicação órfã de uma escrita interrompida) ou
+      // carimbo já expirado: a criação morreu no meio.
+      if (carimbo && String(carimbo) >= String(staleIso)) continue;
+
+      const existe = await base44.asServiceRole.entities.LancamentoContaCorrente.filter(
+        { asaas_event_key: key },
+        { limit: 1 }
+      );
+      const lista = (existe && existe.items) || existe || [];
+      if (lista.length > 0) continue; // já criado: nada a fazer
+
+      orfaos.push({ operation_id: op.id, event_key: key, claimed_at: carimbo || '' });
+      await releaseLancamento(base44, key, op.id);
+    }
+  }
+  return orfaos;
 }
 /* @sync:end */
