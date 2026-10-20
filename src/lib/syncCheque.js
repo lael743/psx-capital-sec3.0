@@ -34,10 +34,16 @@ export async function syncChequeCompensation(cheque) {
   let updatedSchedule = op.installment_schedule || [];
   if (updatedSchedule.length > 0) {
     // Casar parcelas por data de vencimento == data de compensação do cheque
+    // Alocação um-a-um: cada cheque compensado marca no máximo UMA parcela.
+    // Evita que duas parcelas com a mesma data de vencimento sejam baixadas
+    // por um único cheque (ou que um cheque marque duas parcelas).
+    const compensated = allCheques.filter(c => c.status === 'compensado');
+    const usedChequeIds = new Set();
     updatedSchedule = updatedSchedule.map((inst) => {
-      const linkedCheque = allCheques.find(c =>
-        c.compensation_date === inst.due_date && c.status === 'compensado'
+      const linkedCheque = compensated.find(c =>
+        !usedChequeIds.has(c.id) && c.compensation_date === inst.due_date
       );
+      if (linkedCheque) usedChequeIds.add(linkedCheque.id);
       const isPaid = !!linkedCheque;
       return { ...inst, paid: isPaid, status: isPaid ? 'pago' : (inst.status || 'pendente') };
     });
@@ -158,10 +164,14 @@ export async function syncChequeReversal(cheque) {
 
   let updatedSchedule = op.installment_schedule || [];
   if (updatedSchedule.length > 0) {
+    // Mesma alocação um-a-um do fluxo de compensação, para reversão consistente.
+    const compensated = allCheques.filter(c => c.status === 'compensado' && c.id !== cheque.id);
+    const usedChequeIds = new Set();
     updatedSchedule = updatedSchedule.map((inst) => {
-      const linkedCheque = allCheques.find(c =>
-        c.compensation_date === inst.due_date && c.status === 'compensado'
+      const linkedCheque = compensated.find(c =>
+        !usedChequeIds.has(c.id) && c.compensation_date === inst.due_date
       );
+      if (linkedCheque) usedChequeIds.add(linkedCheque.id);
       const isPaid = !!linkedCheque;
       return { ...inst, paid: isPaid, status: isPaid ? 'pago' : 'pendente' };
     });

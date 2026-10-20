@@ -4,6 +4,7 @@ import { base44 } from '@/api/base44Client';
 import { Save, Plus, Filter, RefreshCw, Download, X, CalendarClock, DollarSign, Package, CheckCircle2, Image, MoreVertical, AlertTriangle, Search, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { logAction } from '@/lib/audit';
 import { syncChequeCompensation } from '@/lib/syncCheque';
+import { createOperationalCashFlow } from '@/lib/cashFlowHelper';
 import { fetchAll } from '@/lib/fetchAll';
 import TesourariaTab from '@/components/cheque/TesourariaTab';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -209,8 +210,20 @@ function CompensarChequeModal({ cheque, onClose, onSaved }) {
 
   const save = async () => {
     setSaving(true);
+
+    // Idempotência: relê o cheque para impedir compensação duplicada
+    // (evita crédito em dobro no banco e CashFlow duplicado)
+    const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
+    if (fresh && fresh.status === 'compensado') {
+      setSaving(false);
+      onSaved();
+      onClose();
+      return;
+    }
+
     await base44.entities.Cheque.update(cheque.id, {
       status: 'compensado',
+      compensated_at: data,
       deposited_bank_id: bancoId,
       deposited_bank_name: banco?.name || '',
     });
@@ -219,14 +232,24 @@ function CompensarChequeModal({ cheque, onClose, onSaved }) {
       await base44.entities.Banco.update(bancoId, {
         current_balance: (banco.current_balance || 0) + (cheque.value || 0),
       });
-      await base44.entities.CashFlow.create({
-        type: 'entrada',
+      const cfParams = {
         category: 'compensacao_cheque',
         amount: cheque.value,
         date: data,
         description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco?.name})`,
         method: 'cheque',
-      });
+        bank_id: bancoId,
+        source_type: 'cheque_compensacao',
+        source_id: cheque.id,
+      };
+      if (cheque.operation_id) {
+        await createOperationalCashFlow({ ...cfParams, operation_id: cheque.operation_id });
+      } else {
+        const existing = await base44.entities.CashFlow.filter({ source_type: 'cheque_compensacao', source_id: cheque.id });
+        if (!existing || existing.length === 0) {
+          await base44.entities.CashFlow.create({ type: 'entrada', ...cfParams });
+        }
+      }
     }
 
     await logAction({
@@ -238,7 +261,7 @@ function CompensarChequeModal({ cheque, onClose, onSaved }) {
       after: { status: 'compensado', banco: banco?.name, data_compensacao: data, valor: cheque.value },
     });
 
-    await syncChequeCompensation({ ...cheque, status: 'compensado' });
+    await syncChequeCompensation({ ...cheque, status: 'compensado', compensated_at: data });
 
     setSaving(false);
     onSaved();

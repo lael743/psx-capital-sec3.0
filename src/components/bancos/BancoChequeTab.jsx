@@ -8,6 +8,7 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import { logAction } from '@/lib/audit';
 import { syncChequeCompensation, syncChequeReversal } from '@/lib/syncCheque';
+import { createOperationalCashFlow } from '@/lib/cashFlowHelper';
 
 export default function BancoChequeTab({ banco, cheques = [], onReload }) {
   const [selected, setSelected] = useState(new Set());
@@ -57,8 +58,17 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
 
   const doCompensar = async (cheque) => {
     setSaving(true);
+    // Idempotência: impede compensar duas vezes o mesmo cheque
+    const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
+    if (fresh && fresh.status === 'compensado') {
+      setSaving(false);
+      refresh();
+      return;
+    }
+    const dataComp = today();
     await base44.entities.Cheque.update(cheque.id, {
       status: 'compensado',
+      compensated_at: dataComp,
       custody_status: 'financeiro',
       deposited_bank_id: banco.id,
       deposited_bank_name: banco.name,
@@ -66,14 +76,24 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
     await base44.entities.Banco.update(banco.id, {
       current_balance: (banco.current_balance || 0) + (cheque.value || 0),
     });
-    await base44.entities.CashFlow.create({
-      type: 'entrada',
+    const cfParams = {
       category: 'compensacao_cheque',
       amount: cheque.value,
-      date: today(),
+      date: dataComp,
       description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
       method: 'cheque',
-    });
+      bank_id: banco.id,
+      source_type: 'cheque_compensacao',
+      source_id: cheque.id,
+    };
+    if (cheque.operation_id) {
+      await createOperationalCashFlow({ ...cfParams, operation_id: cheque.operation_id });
+    } else {
+      const existing = await base44.entities.CashFlow.filter({ source_type: 'cheque_compensacao', source_id: cheque.id });
+      if (!existing || existing.length === 0) {
+        await base44.entities.CashFlow.create({ type: 'entrada', ...cfParams });
+      }
+    }
     await logAction({
       action: 'compensar',
       entity: 'Cheque',
@@ -94,20 +114,32 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
     for (let i = 0; i < chequesToProcess.length; i++) {
       const cheque = chequesToProcess[i];
       setProgress({ current: i, total: chequesToProcess.length, label: `Cheque #${cheque.check_number} — ${cheque.client_name}` });
+      const dataComp = today();
       await base44.entities.Cheque.update(cheque.id, {
         status: 'compensado',
+        compensated_at: dataComp,
         custody_status: 'financeiro',
         deposited_bank_id: banco.id,
         deposited_bank_name: banco.name,
       });
-      await base44.entities.CashFlow.create({
-        type: 'entrada',
+      const cfParams = {
         category: 'compensacao_cheque',
         amount: cheque.value,
-        date: today(),
+        date: dataComp,
         description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
         method: 'cheque',
-      });
+        bank_id: banco.id,
+        source_type: 'cheque_compensacao',
+        source_id: cheque.id,
+      };
+      if (cheque.operation_id) {
+        await createOperationalCashFlow({ ...cfParams, operation_id: cheque.operation_id });
+      } else {
+        const existing = await base44.entities.CashFlow.filter({ source_type: 'cheque_compensacao', source_id: cheque.id });
+        if (!existing || existing.length === 0) {
+          await base44.entities.CashFlow.create({ type: 'entrada', ...cfParams });
+        }
+      }
       await logAction({
         action: 'compensar',
         entity: 'Cheque',
@@ -143,6 +175,9 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
       date: today(),
       description: `Estorno compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
       method: 'cheque',
+      bank_id: banco.id,
+      source_type: 'cheque_estorno_compensacao',
+      source_id: cheque.id,
     });
     await logAction({
       action: 'reverter',
