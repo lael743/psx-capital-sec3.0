@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { X, CornerUpLeft, Building2, Landmark } from 'lucide-react';
 import { formatCurrency, today } from '@/lib/finance';
+import { novoTransferId } from '@/lib/bankLedger';
+import { registrarRetorno } from '@/lib/eventoBancario';
 
 const OPCOES = [
   { value: 'tesouraria', label: 'Tesouraria', desc: 'Retorna para controle interno', icon: '🏛️' },
@@ -19,6 +21,9 @@ export default function RetornarDepartamentoModal({ cheques, banco, onClose, onS
   const [data, setData] = useState(today());
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  // Estável por lote: repetir o clique não cria dois lançamentos de retorno.
+  const [eventId] = useState(() => `retorno-${novoTransferId()}`);
 
   const isBulk = Array.isArray(cheques);
   const list = isBulk ? cheques : [cheques];
@@ -26,28 +31,29 @@ export default function RetornarDepartamentoModal({ cheques, banco, onClose, onS
 
   const save = async () => {
     setSaving(true);
+    setError('');
 
-    for (const c of list) {
-      await base44.entities.Cheque.update(c.id, {
-        custody_status: destino,
-        status: 'devolvido',
-        return_reason: notes || 'Devolvido pelo banco',
-        notes: (c.notes ? c.notes + '\n' : '') +
-          `[RETORNADO DO BANCO em ${data}] Destino: ${destino}${notes ? ` | Obs: ${notes}` : ''}`,
-      });
+    if (!banco) {
+      setSaving(false);
+      setError('Banco de origem não identificado.');
+      return;
     }
 
-    // CashFlow de controle — cancela a remessa esperada (NÃO afeta saldo,
-    // pois o saldo só é creditado quando o cheque é compensado)
-    if (banco) {
-      await base44.entities.CashFlow.create({
-        type: 'saida',
-        category: 'cheque_devolvido',
-        amount: totalValue,
-        date: data,
-        description: `Devolução de ${list.length} cheque(s) pelo banco ${banco.name} → ${destino} (sem impacto no saldo). ${notes}`.trim(),
-        method: 'cheque',
+    // O SERVIDOR grava a custódia e o lançamento de controle (sem efeito de
+    // saldo), uma vez por evento.
+    try {
+      await registrarRetorno({
+        bankId: banco.id,
+        chequeIds: list.map(c => c.id),
+        data,
+        destino,
+        observacoes: notes,
+        eventId,
       });
+    } catch (e) {
+      setSaving(false);
+      setError(e.message || 'Não foi possível processar o retorno.');
+      return;
     }
 
     setSaving(false);
@@ -116,6 +122,8 @@ export default function RetornarDepartamentoModal({ cheques, banco, onClose, onS
             <input className="input-field" placeholder="Ex: cheque sem fundos, assinatura incorreta..." value={notes} onChange={e => setNotes(e.target.value)} />
           </div>
         </div>
+
+        {error && <p className="mx-5 mb-2 text-xs font-medium text-red-600">{error}</p>}
 
         <div className="flex justify-end gap-2 px-5 pb-5">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">Cancelar</button>

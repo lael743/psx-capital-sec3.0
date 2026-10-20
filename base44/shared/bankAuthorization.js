@@ -46,6 +46,9 @@ export const ACOES_BANCARIAS = Object.freeze({
   RECUPERAR: 'recuperar',
   INSPECIONAR: 'inspecionar',
   LIBERAR_REIVINDICACAO: 'liberar_reivindicacao',
+  // D4.2 — eventos de caixa migrados para o servidor.
+  LANCAR: 'lancar',
+  REMESSA: 'remessa',
 });
 
 /** Chave de página usada pelo controle de acesso existente (pageAccess.js). */
@@ -55,6 +58,8 @@ export const PAGINA_BANCOS = 'bancos';
 const OPERACIONAIS = Object.freeze([
   ACOES_BANCARIAS.TRANSFERIR,
   ACOES_BANCARIAS.INSPECIONAR,
+  ACOES_BANCARIAS.LANCAR,
+  ACOES_BANCARIAS.REMESSA,
 ]);
 
 /** Ações de natureza administrativa (reversão e recuperação). */

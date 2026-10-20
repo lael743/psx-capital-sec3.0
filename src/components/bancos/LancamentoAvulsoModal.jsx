@@ -2,12 +2,9 @@ import { useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { logAction } from '@/lib/audit';
-import { applyBankDelta, chaveEvento, novoTransferId } from '@/lib/bankLedger';
+import { novoTransferId } from '@/lib/bankLedger';
+import { registrarLancamentoAvulso } from '@/lib/eventoBancario';
 import { formatCurrency } from '@/lib/finance';
-
-const bancoStore = {
-  updateWhere: (query, update) => base44.entities.Banco.updateMany(query, update),
-};
 
 export default function LancamentoAvulsoModal({ banco, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -39,34 +36,23 @@ export default function LancamentoAvulsoModal({ banco, onClose, onSaved }) {
     const amount = parseFloat(form.amount);
     const saldoAnterior = banco.current_balance || 0;
 
-    // Efeito de saldo atômico: nunca sobre uma leitura antiga.
-    const efeito = await applyBankDelta({
-      store: bancoStore,
-      bankId: banco.id,
-      delta: form.type === 'entrada' ? amount : -amount,
-      eventKey: chaveEvento('lancamento_avulso', eventId),
-    });
-
-    if (efeito.status === 'ja_aplicado') {
+    // O SERVIDOR valida, autoriza e aplica saldo + lançamento (1:1 por evento).
+    try {
+      await registrarLancamentoAvulso({
+        bankId: banco.id,
+        tipo: form.type,
+        valor: amount,
+        motivo: form.motivo.trim(),
+        data: form.date,
+        eventId,
+      });
+    } catch (e) {
       setSaving(false);
-      setError('Este lançamento já foi aplicado nesta conta.');
+      setError(e.message || 'Não foi possível registrar o lançamento.');
       return;
     }
 
-    // Registra no CashFlow — COM a conta identificada e origem estável
     const bancoDepois = await base44.entities.Banco.get(banco.id).catch(() => null);
-    await base44.entities.CashFlow.create({
-      type: form.type,
-      category: 'lancamento_avulso',
-      amount,
-      date: form.date,
-      description: `[Lançamento Avulso] ${banco.name} — ${form.motivo}`,
-      method: 'outro',
-      bank_id: banco.id,
-      source_type: 'lancamento_avulso',
-      source_id: eventId,
-      balance_after: bancoDepois?.current_balance ?? null,
-    });
 
     // Audit log
     await logAction({

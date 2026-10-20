@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
 import { X, Building2, Send, CheckCircle2 } from 'lucide-react';
 import { formatCurrency, formatDate, today } from '@/lib/finance';
+import { novoTransferId } from '@/lib/bankLedger';
+import { registrarRemessa } from '@/lib/eventoBancario';
 
 /**
  * Modal para enviar lote de cheques ao banco.
@@ -16,6 +18,9 @@ export default function EnviarBancoModal({ cheques, onClose, onSaved }) {
   const [dataEnvio, setDataEnvio] = useState(today());
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  // Estável por lote: repetir o clique não cria dois registros de remessa.
+  const [eventId] = useState(() => `remessa-${novoTransferId()}`);
 
   useEffect(() => {
     base44.entities.Banco.filter({ active: true }, 'name', 100).then(bks => {
@@ -31,27 +36,23 @@ export default function EnviarBancoModal({ cheques, onClose, onSaved }) {
   const save = async () => {
     if (!bancoId) return;
     setSaving(true);
+    setError('');
 
-    // Atualiza custody_status de todos os cheques para 'financeiro' e salva banco destino
-    await Promise.all(cheques.map(c =>
-      base44.entities.Cheque.update(c.id, {
-        custody_status: 'financeiro',
-        deposited_bank_id: bancoId,
-        deposited_bank_name: banco?.name || '',
-        notes: (c.notes ? c.notes + '\n' : '') +
-          `[ENVIADO AO BANCO em ${dataEnvio}] Banco: ${banco?.name || bancoId}${notes ? ` | Obs: ${notes}` : ''}`,
-      })
-    ));
-
-    // CashFlow de controle — entrada futura esperada (sem afetar saldo ainda)
-    await base44.entities.CashFlow.create({
-      type: 'entrada',
-      category: 'remessa_banco',
-      amount: totalValue,
-      date: dataEnvio,
-      description: `Remessa de ${cheques.length} cheque(s) ao banco ${banco?.name} — aguardando compensação. ${notes}`.trim(),
-      method: 'cheque',
-    });
+    // O SERVIDOR grava a custódia do lote e o lançamento de controle (sem
+    // efeito de saldo — o saldo só muda na compensação), uma vez por evento.
+    try {
+      await registrarRemessa({
+        bankId: bancoId,
+        chequeIds: cheques.map(c => c.id),
+        data: dataEnvio,
+        observacoes: notes,
+        eventId,
+      });
+    } catch (e) {
+      setSaving(false);
+      setError(e.message || 'Não foi possível enviar o lote.');
+      return;
+    }
 
     setSaving(false);
     onSaved();
@@ -119,6 +120,8 @@ export default function EnviarBancoModal({ cheques, onClose, onSaved }) {
             Os cheques serão marcados como <strong>no financeiro</strong>. Quando o banco confirmar a compensação, registre individualmente em cada cheque.
           </div>
         </div>
+
+        {error && <p className="mx-5 mb-2 text-xs font-medium text-red-600">{error}</p>}
 
         <div className="flex justify-end gap-2 px-5 pb-5">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">Cancelar</button>
