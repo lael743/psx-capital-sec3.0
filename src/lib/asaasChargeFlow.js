@@ -348,7 +348,11 @@ export async function markChargeFailed(base44, opId, slot, erro, attempts, nowIs
 export async function markChargeAmbiguous(base44, opId, slot, erro, nowIso) {
   const msg = String(erro || '').slice(0, 300);
   const res = await base44.asServiceRole.entities.Operation.updateMany(
-    { id: opId, [campoIntent(slot, 'status')]: COBRANCA_STATUS.SOLICITANDO },
+    {
+      id: opId,
+      [campoIntent(slot, 'status')]: COBRANCA_STATUS.SOLICITANDO,
+      [campoIntent(slot, 'claimed_at')]: nowIso,
+    },
     {
       $set: {
         [campoIntent(slot, 'status')]: COBRANCA_STATUS.RECONCILIACAO_PENDENTE,
@@ -461,8 +465,11 @@ export async function emitirCobranca(base44, opts) {
       return { slot, parcela: alvo.rotulo, ok: true, reconciliada: true, payment_id: rec.payment_id };
     }
     if (rec.indeterminado) {
-      // Nem a consulta foi conclusiva. A intenção permanece pendente — não se
-      // emite um segundo boleto por não se saber do primeiro.
+      // Nem a consulta foi conclusiva. A intenção VOLTA a
+      // `reconciliacao_pendente`: deixá-la em `solicitando` descreveria uma
+      // emissão ativa quando o que existe é uma dúvida à espera do provedor —
+      // e o estado precisa dizer a verdade sobre o que se sabe.
+      await markChargeAmbiguous(base44, operation.id, slot, 'conciliação inconclusiva', nowIso);
       return { slot, parcela: alvo.rotulo, ok: false, motivo: 'reconciliacao_indeterminada' };
     }
     // ausente → a cobrança não existe; criar agora é seguro.
@@ -545,14 +552,27 @@ async function persistirCobranca(base44, o) {
     status: charge.status || 'pending',
   };
 
-  const gravou = await markChargeCreated(
-    base44,
-    o.operationId,
-    o.slot,
-    info,
-    o.alvo.campos(info),
-    o.nowIso
-  );
+  let gravou = false;
+  try {
+    gravou = await markChargeCreated(base44, o.operationId, o.slot, info, o.alvo.campos(info), o.nowIso);
+  } catch (e) {
+    // A cobrança EXISTE no provedor e NÃO conseguimos gravá-la. Isto é
+    // exatamente o estado ambíguo — jamais `solicitando`, que após a
+    // tolerância autorizaria uma nova emissão e produziria o segundo boleto
+    // que esta fase existe para impedir.
+    try {
+      await markChargeAmbiguous(base44, o.operationId, o.slot, `falha ao gravar identificador: ${e && e.message}`, o.nowIso);
+    } catch (_) {
+      /* a reivindicação abandonada ainda força a conciliação na retomada */
+    }
+    return {
+      slot: o.slot,
+      parcela: o.alvo.rotulo,
+      ok: false,
+      motivo: 'reconciliacao_pendente',
+      payment_id: charge.id,
+    };
+  }
 
   if (!gravou) {
     // O estado da intenção mudou sob nós — outra execução tomou a
