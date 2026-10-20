@@ -171,27 +171,34 @@ Deno.serve(async (req) => {
     if (operationId && scheduleIndex >= 0) {
       const operation = await base44.asServiceRole.entities.Operation.get(operationId);
       if (operation) {
-        const schedule = Array.isArray(operation.installment_schedule) ? [...operation.installment_schedule] : [];
+        const schedule = Array.isArray(operation.installment_schedule) ? operation.installment_schedule : [];
         const inst = schedule[scheduleIndex];
         if (inst) {
-          const updateData = { installment_schedule: schedule };
+          // D1.3 — escrita ATÔMICA por parcela: `$set` pontilhado no índice.
+          // Regravar o array inteiro causava PERDA DE ATUALIZAÇÃO quando duas
+          // parcelas diferentes da mesma operação eram pagas ao mesmo tempo:
+          // a última gravação sobrescrevia o array lido antes da primeira.
+          // O índice é estável durante a vida da operação, então endereçar a
+          // parcela por posição elimina a corrida.
+          const base = `installment_schedule.${scheduleIndex}`;
+          const patch = {};
 
           if (isDeleted) {
             // Charge cancelled/deleted in Asaas — mark as cancelled (keep id for badge display)
-            inst.asaas_payment_status = 'deleted';
-            inst.asaas_invoice_url = '';
-            inst.asaas_pix_qrcode = '';
-            inst.asaas_boleto_line = '';
+            patch[`${base}.asaas_payment_status`] = 'deleted';
+            patch[`${base}.asaas_invoice_url`] = '';
+            patch[`${base}.asaas_pix_qrcode`] = '';
+            patch[`${base}.asaas_boleto_line`] = '';
           } else {
-            inst.asaas_payment_status = status;
+            patch[`${base}.asaas_payment_status`] = status;
           }
 
           if (isReceived && !isDeleted) {
             // Estado da parcela é atribuição idempotente — pode ser reaplicado
             // sem risco, por isso não depende da reivindicação do evento.
-            inst.paid = true;
-            inst.paid_date = today;
-            inst.status = 'paga';
+            patch[`${base}.paid`] = true;
+            patch[`${base}.paid_date`] = today;
+            patch[`${base}.status`] = 'paga';
 
             const numOp = operation.numero_operacao
               ? String(operation.numero_operacao).padStart(6, '0')
@@ -230,12 +237,15 @@ Deno.serve(async (req) => {
               }
             }
           } else if (status === 'overdue') {
-            inst.status = 'atrasada';
+            patch[`${base}.status`] = 'atrasada';
           }
 
           // amount_paid/balance_due/status são gravados atomicamente pelo
-          // processReceipt — aqui só o cronograma de parcelas.
-          await base44.asServiceRole.entities.Operation.update(operationId, updateData);
+          // processReceipt — aqui só o cronograma de parcelas, parcela a parcela.
+          await base44.asServiceRole.entities.Operation.updateMany(
+            { id: operationId },
+            { $set: patch }
+          );
         }
       }
     } else if (parcelaId) {

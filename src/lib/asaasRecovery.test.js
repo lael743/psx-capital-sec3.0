@@ -36,6 +36,73 @@ import {
 
 /* ── Banco em memória fiel à plataforma ────────────────────────────────────── */
 
+const cloneSimples = (o) => (o == null ? o : JSON.parse(JSON.stringify(o)));
+
+/** Leitura/escrita por caminho pontilhado — `installment_schedule.0.status`. */
+function lerPath(obj, p) {
+  return p.split('.').reduce((o, k) => (o === undefined || o === null ? undefined : o[k]), obj);
+}
+function gravarPath(obj, p, v) {
+  const ks = p.split('.');
+  let o = obj;
+  for (let i = 0; i < ks.length - 1; i++) {
+    if (o[ks[i]] === undefined || o[ks[i]] === null) o[ks[i]] = {};
+    o = o[ks[i]];
+  }
+  o[ks[ks.length - 1]] = v;
+}
+
+/** Casamento de consulta — o subconjunto comprovado da plataforma (D1.2/D1.3). */
+function casaCom(e, q) {
+  for (const [k, v] of Object.entries(q)) {
+    if (k === '$or') {
+      if (!v.some((s) => casaCom(e, s))) return false;
+      continue;
+    }
+    const val = lerPath(e, k);
+    if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+      if ('$ne' in v) {
+        // sobre array: "não contém"
+        if (Array.isArray(val)) {
+          if (val.includes(v.$ne)) return false;
+        } else if (val === v.$ne) return false;
+        continue;
+      }
+      if ('$in' in v) {
+        if (!v.$in.includes(val)) return false;
+        continue;
+      }
+      if ('$lt' in v) {
+        if (!(String(val || '') < String(v.$lt))) return false;
+        continue;
+      }
+      if ('$exists' in v) {
+        if ((val !== undefined) !== v.$exists) return false;
+        continue;
+      }
+      return false;
+    }
+    if (Array.isArray(val)) {
+      if (!val.includes(v)) return false;
+    } else if (val !== v) return false;
+  }
+  return true;
+}
+
+/** Aplica os operadores de atualização usados pelo fluxo. */
+function aplicarUpdate(rec, u) {
+  if (u.$set) for (const [k, v] of Object.entries(u.$set)) gravarPath(rec, k, cloneSimples(v));
+  if (u.$inc) for (const [k, v] of Object.entries(u.$inc)) gravarPath(rec, k, (lerPath(rec, k) || 0) + v);
+  if (u.$push) for (const [k, v] of Object.entries(u.$push)) gravarPath(rec, k, [...(lerPath(rec, k) || []), v]);
+  if (u.$addToSet)
+    for (const [k, v] of Object.entries(u.$addToSet)) {
+      const atual = lerPath(rec, k) || [];
+      if (!atual.includes(v)) gravarPath(rec, k, [...atual, v]);
+    }
+  if (u.$pull) for (const [k, v] of Object.entries(u.$pull)) gravarPath(rec, k, (lerPath(rec, k) || []).filter((x) => x !== v));
+  if (u.$unset) for (const k of Object.keys(u.$unset)) gravarPath(rec, k, undefined);
+}
+
 function fakePlatform() {
   const ops = new Map();
   const lancs = new Map();
@@ -63,23 +130,13 @@ function fakePlatform() {
             Object.assign(o, clone(patch));
             return clone(o);
           },
+          // Atômico POR DOCUMENTO: quem não casa a guarda recebe updated === 0.
           updateMany: async (query, update) => {
             boom('op.updateMany');
             const o = ops.get(query.id);
             if (!o) return { updated: 0 };
-            // Guardas $ne sobre arrays (asaas_eventos_processados,
-            // asaas_lancamentos_gerados) — o documento só casa se o valor
-            // ainda não estiver presente.
-            for (const [k, v] of Object.entries(query)) {
-              if (v && typeof v === 'object' && '$ne' in v) {
-                if ((o[k] || []).includes(v.$ne)) return { updated: 0 };
-              }
-            }
-            // $inc + $push na MESMA escrita — atômico por documento
-            if (update.$inc) for (const [k, v] of Object.entries(update.$inc)) o[k] = (o[k] || 0) + v;
-            if (update.$push) for (const [k, v] of Object.entries(update.$push)) o[k] = [...(o[k] || []), v];
-            if (update.$pull) for (const [k, v] of Object.entries(update.$pull)) o[k] = (o[k] || []).filter((x) => x !== v);
-            if (update.$set) Object.assign(o, update.$set);
+            if (!casaCom(o, query)) return { updated: 0 };
+            aplicarUpdate(o, update);
             return { updated: 1 };
           },
         },
@@ -109,6 +166,13 @@ function fakePlatform() {
             Object.assign(e, clone(patch));
             return clone(e);
           },
+          // D1.3 — compare-and-swap da recuperação: só quem vence recebe updated > 0.
+          updateMany: async (query, update) => {
+            boom('evento.updateMany');
+            const alvos = [...eventos.values()].filter((e) => casaCom(e, query));
+            for (const e of alvos) aplicarUpdate(e, update);
+            return { updated: alvos.length };
+          },
           filter: async () => [...eventos.values()].map(clone),
         },
       },
@@ -119,7 +183,12 @@ function fakePlatform() {
     faults,
     client,
     seedOp(op) {
-      ops.set(op.id, { asaas_eventos_processados: [], ...clone(op) });
+      ops.set(op.id, {
+        asaas_eventos_processados: [],
+        asaas_lancamentos_gerados: [],
+        asaas_lancamentos_ts: {},
+        ...clone(op),
+      });
     },
     getOp(id) { return clone(ops.get(id)); },
     listLanc() { return [...lancs.values()].map(clone); },
@@ -434,7 +503,7 @@ test('D1.2.10 — o diário distingue recebido, em processamento, contabilizado 
   assert.equal(classifyEvento({ ...base }, NOW_MS, STALE_SECONDS), 'reivindicado');
   assert.equal(
     classifyEvento({ ...base, claimed_at: '2026-10-19T19:00:00.000Z' }, NOW_MS, STALE_SECONDS),
-    'em_processamento'
+    'abandonado'
   );
   assert.equal(
     classifyEvento({ ...base, status: EVENTO_STATUS.CONTABILIZADO }, NOW_MS, STALE_SECONDS),

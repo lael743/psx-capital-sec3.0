@@ -17,48 +17,47 @@ Deno.serve(async (req) => {
       if (!operation) return Response.json({ error: 'Operação não encontrada' }, { status: 404 });
 
       const schedule = Array.isArray(operation.installment_schedule) ? operation.installment_schedule : [];
-      const updatedSchedule = [...schedule];
 
-      for (let i = 0; i < updatedSchedule.length; i++) {
-        const inst = updatedSchedule[i];
+      // D1.3 — escrita ATÔMICA por parcela. Regravar o array inteiro causava
+      // perda de atualização quando este refresh corria ao mesmo tempo que o
+      // pagamento de outra parcela da mesma operação: quem gravasse por último
+      // sobrescrevia o array lido antes.
+      const patch = {};
+
+      for (let i = 0; i < schedule.length; i++) {
+        const inst = schedule[i];
         if (!inst.asaas_payment_id) continue;
+        const base = `installment_schedule.${i}`;
         try {
           const payment = await asaasRequest(`/payments/${inst.asaas_payment_id}`, {}, apiKey);
           const mapped = mapAsaasStatus(payment.status);
           // If charge was cancelled/deleted in Asaas, clear local link so it can be regenerated
           if (mapped === 'deleted' || payment.status === 'DELETED') {
-            updatedSchedule[i] = {
-              ...inst,
-              asaas_payment_status: 'deleted',
-              asaas_invoice_url: '',
-              asaas_pix_qrcode: '',
-              asaas_boleto_line: '',
-            };
+            patch[`${base}.asaas_payment_status`] = 'deleted';
+            patch[`${base}.asaas_invoice_url`] = '';
+            patch[`${base}.asaas_pix_qrcode`] = '';
+            patch[`${base}.asaas_boleto_line`] = '';
           } else {
-            updatedSchedule[i] = {
-              ...inst,
-              asaas_payment_status: mapped,
-              asaas_invoice_url: payment.invoiceUrl || inst.asaas_invoice_url || '',
-              asaas_boleto_line: payment.bankSlipCode || inst.asaas_boleto_line || '',
-            };
+            patch[`${base}.asaas_payment_status`] = mapped;
+            patch[`${base}.asaas_invoice_url`] = payment.invoiceUrl || inst.asaas_invoice_url || '';
+            patch[`${base}.asaas_boleto_line`] = payment.bankSlipCode || inst.asaas_boleto_line || '';
           }
         } catch (e) {
           // 404 means the charge was permanently removed in Asaas — clear local link
           const msg = String(e.message || '');
           if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
-            updatedSchedule[i] = {
-              ...inst,
-              asaas_payment_status: 'deleted',
-              asaas_invoice_url: '',
-              asaas_pix_qrcode: '',
-              asaas_boleto_line: '',
-            };
+            patch[`${base}.asaas_payment_status`] = 'deleted';
+            patch[`${base}.asaas_invoice_url`] = '';
+            patch[`${base}.asaas_pix_qrcode`] = '';
+            patch[`${base}.asaas_boleto_line`] = '';
           }
           // other errors: skip this parcela
         }
       }
 
-      await base44.entities.Operation.update(operation_id, { installment_schedule: updatedSchedule });
+      if (Object.keys(patch).length > 0) {
+        await base44.entities.Operation.updateMany({ id: operation_id }, { $set: patch });
+      }
       return Response.json({ success: true, refreshed: true });
     }
 

@@ -56,7 +56,14 @@
  * registrado, mas amount_paid não é tocado — exatamente como antes.
  */
 import { asaasEventKey, alreadyProcessed } from './operationAccounting.js';
-import { EVENTO_STATUS, newEventoRecord, planRecovery } from './asaasEventJournal.js';
+import {
+  EVENTO_STATUS,
+  newEventoRecord,
+  planRecovery,
+  recoveryClaimFilter,
+  proximoEstadoFalha,
+  STALE_SECONDS,
+} from './asaasEventJournal.js';
 
 /* @sync:start — bloco idêntico em base44/shared/asaasReceiptFlow.js */
 
@@ -102,14 +109,39 @@ export async function recomputeDerived(base44, operationId) {
 /* ── Efeito 2: extrato do cliente (uma vez por evento) ─────────────────────── */
 
 /**
- * Reivindica o direito de CRIAR o lançamento deste evento. Atômico: sob
- * entregas simultâneas do mesmo evento, exatamente um processo vence.
+ * Reivindica o direito de CRIAR o lançamento deste evento — com PRAZO DE
+ * VALIDADE, num ÚNICO documento (a operação).
+ *
+ * Conferir-e-criar não é atômico, então a criação é precedida desta
+ * reivindicação. Três propriedades importam, e todas foram comprovadas no
+ * ambiente real:
+ *
+ *   1. EXCLUSIVIDADE — o `updateMany` é atômico POR DOCUMENTO: sob N entregas
+ *      simultâneas do mesmo evento, exatamente uma recebe `updated === 1`.
+ *   2. VALIDADE — a reivindicação expira (`asaas_lancamentos_ts`). Uma
+ *      execução morta entre reivindicar e criar não trava o evento para
+ *      sempre: passada a tolerância, a próxima recuperação retoma.
+ *   3. ANTI-ROUBO — uma reivindicação recente não pode ser tomada, então duas
+ *      execuções nunca criam o mesmo lançamento.
+ *
+ * Reivindicar num documento ÚNICO é o que torna isto seguro mesmo quando o
+ * diário tem VÁRIAS linhas para o mesmo evento: a exclusividade não depende de
+ * qual linha está sendo processada. (Reivindicar por `event_key` sobre várias
+ * linhas NÃO é exclusivo — o updateMany pode dividir os documentos entre duas
+ * chamadas simultâneas. Comprovado no ambiente.)
  */
-export async function claimLancamento(base44, key, targetId) {
+export async function claimLancamento(base44, key, targetId, nowIso, staleIso) {
   if (!key || !targetId) return false;
+  const campo = `asaas_lancamentos_ts.${key}`;
   const res = await base44.asServiceRole.entities.Operation.updateMany(
-    { id: targetId, asaas_lancamentos_gerados: { $ne: key } },
-    { $push: { asaas_lancamentos_gerados: key } }
+    {
+      id: targetId,
+      $or: [{ [campo]: { $exists: false } }, { [campo]: { $lt: staleIso } }],
+    },
+    {
+      $set: { [campo]: nowIso },
+      $addToSet: { asaas_lancamentos_gerados: key },
+    }
   );
   return !!res && res.updated === 1;
 }
@@ -118,25 +150,31 @@ export async function claimLancamento(base44, key, targetId) {
 export async function releaseLancamento(base44, key, targetId) {
   if (!key || !targetId) return;
   await base44.asServiceRole.entities.Operation.updateMany(
-    { id: targetId, asaas_lancamentos_gerados: key },
-    { $pull: { asaas_lancamentos_gerados: key } }
+    { id: targetId },
+    {
+      $pull: { asaas_lancamentos_gerados: key },
+      $unset: { [`asaas_lancamentos_ts.${key}`]: '' },
+    }
   );
 }
 
 /**
  * Cria o lançamento no extrato do cliente no máximo UMA vez por evento.
  *
+ * SEMPRE reivindica — nunca cria "por confiança". É esta reivindicação, e só
+ * ela, que garante um único lançamento por evento. O prazo de validade cobre o
+ * caso de uma execução morta entre reivindicar e criar.
+ *
  * @param opts.targetId  operação que guarda a reivindicação (claim)
- * @param opts.force     recuperação: cria sem reivindicar. Só é usado em
- *                       eventos comprovadamente mortos (falha/travado), onde
- *                       nenhum processo vivo pode estar criando o mesmo
- *                       lançamento — por isso é seguro.
  */
 export async function ensureLancamento(base44, key, payload, opts) {
   const o = opts || {};
   if (!key || !payload || typeof payload !== 'object' || Object.keys(payload).length === 0) {
     return { created: false, lancamento: null };
   }
+
+  const nowIso = o.nowIso || new Date().toISOString();
+  const staleIso = o.staleIso || new Date(Date.now() - STALE_SECONDS * 1000).toISOString();
 
   const ler = async () => {
     const l = await base44.asServiceRole.entities.LancamentoContaCorrente.filter({
@@ -149,8 +187,8 @@ export async function ensureLancamento(base44, key, payload, opts) {
   if (existente) return { created: false, lancamento: existente };
 
   // Conferir-e-criar não é atômico: reivindica o direito de criar.
-  if (o.targetId && !o.force) {
-    const venceu = await claimLancamento(base44, key, o.targetId);
+  if (o.targetId) {
+    const venceu = await claimLancamento(base44, key, o.targetId, nowIso, staleIso);
     if (!venceu) return { created: false, lancamento: await ler() };
   }
 
@@ -162,12 +200,13 @@ export async function ensureLancamento(base44, key, payload, opts) {
     return { created: true, lancamento: created };
   } catch (e) {
     // Falhou depois de reivindicar: devolve a reivindicação para que a
-    // recuperação (ou uma reentrega) possa tentar de novo.
+    // recuperação (ou uma reentrega) possa tentar de novo. Se nem isto
+    // funcionar, o prazo de validade cobre o caso.
     if (o.targetId) {
       try {
         await releaseLancamento(base44, key, o.targetId);
       } catch (_) {
-        /* a recuperação ainda pode intervir com force */
+        /* a validade da reivindicação cobre este caso */
       }
     }
     throw e;
@@ -264,60 +303,144 @@ export async function processReceipt(base44, input) {
 /* ── Recuperação ───────────────────────────────────────────────────────────── */
 
 /**
+ * Reivindica UMA linha do diário para recuperação, por compare-and-swap.
+ *
+ * A D1.2 decidia por IDADE — o que não é exclusividade: duas execuções
+ * simultâneas viam o mesmo evento elegível e ambas agiam.
+ *
+ * A reivindicação é por `id` (UM documento), porque a atomicidade do
+ * `updateMany` é POR DOCUMENTO. Com VÁRIAS linhas para o mesmo evento, uma
+ * reivindicação por `event_key` podia ser dividida entre duas execuções —
+ * comprovado no ambiente (5 chamadas simultâneas sobre 2 linhas → 2 venceram).
+ *
+ * Isto é ECONOMIA DE TRABALHO, não a garantia de correção. A garantia está em
+ * ensureLancamento, cuja reivindicação vive num documento único (a operação) e
+ * portanto é indivisível.
+ *
+ * `contabilizado` e `falha_definitiva` não casam com o filtro — evento
+ * concluído nunca volta, e falha definitiva exige intervenção manual.
+ */
+export async function claimRecovery(base44, recordId, eventKey, nowIso, staleIso) {
+  const res = await base44.asServiceRole.entities.AsaasEvento.updateMany(
+    { id: recordId, ...recoveryClaimFilter(eventKey, staleIso) },
+    { $set: { status: EVENTO_STATUS.EM_RECUPERACAO, recovery_started_at: nowIso } }
+  );
+  return !!res && res.updated === 1;
+}
+
+/**
  * Recupera um evento parcialmente processado.
  *
  * O ponto central: os efeitos são OBSERVADOS nas próprias entidades, nunca
  * presumidos a partir do diário. Assim, recuperar um evento cujo diário ficou
  * desatualizado (ou cujo fechamento falhou) não duplica nada.
+ *
+ * @param staleIso corte de abandono; a reivindicação anterior precisa ser
+ *                 mais antiga que ele para ser retomada.
  */
-export async function recoverEvento(base44, record, now) {
-  const nowIso = now || new Date().toISOString();
+export async function recoverEvento(base44, record, nowIso, staleIso) {
+  const now = nowIso || new Date().toISOString();
+  const stale = staleIso || new Date(Date.now() - STALE_SECONDS * 1000).toISOString();
   const key = record.event_key;
 
-  // Observa o efeito 1 no marcador atômico. Sem operação alvo não há efeito
-  // monetário a verificar (caminho parcela).
-  const op = record.operation_id
-    ? await base44.asServiceRole.entities.Operation.get(record.operation_id)
-    : null;
-  const amountPaidAplicado = record.operation_id ? alreadyProcessed(op, key) : true;
+  // Exclusividade. Sem esta reivindicação, duas recuperações simultâneas
+  // criariam o mesmo lançamento de extrato duas vezes.
+  const targetId =
+    (record.lancamento_payload && record.lancamento_payload.operation_id) || record.operation_id || null;
 
-  // Observa o efeito 2 na própria entidade.
-  const lancamentos = await base44.asServiceRole.entities.LancamentoContaCorrente.filter({
-    asaas_event_key: key,
-  });
-  const lancamentoExiste = !!(lancamentos && lancamentos.length > 0);
-
-  const plan = planRecovery(record, { amountPaidAplicado, lancamentoExiste });
-
-  const effects = {
-    amount_paid: amountPaidAplicado,
-    lancamento_id: lancamentoExiste ? lancamentos[0].id : '',
-  };
-
-  if (plan.needsAmountPaid && record.operation_id) {
-    const r = await applyReceiptAtomically(base44, record.operation_id, key, record.value);
-    effects.amount_paid = amountPaidAplicado || r.applied;
-    if (r.applied) await recomputeDerived(base44, record.operation_id);
+  const venceu = await claimRecovery(base44, record.id, key, now, stale);
+  if (!venceu) {
+    return {
+      event_key: key,
+      recuperado: false,
+      ignorado: 'evento já recuperado, concluído ou detido por outra execução',
+    };
   }
 
-  if (plan.needsLancamento) {
-    // force: a recuperação só age sobre eventos mortos (falha/travado), então
-    // nenhum processo vivo pode estar criando este lançamento agora.
-    const l = await ensureLancamento(base44, key, record.lancamento_payload, { force: true });
-    effects.lancamento_id = l.lancamento ? l.lancamento.id : '';
+  try {
+    // Observa o efeito 1 no marcador atômico. Sem operação alvo não há efeito
+    // monetário a verificar (caminho parcela).
+    const op = record.operation_id
+      ? await base44.asServiceRole.entities.Operation.get(record.operation_id)
+      : null;
+    const amountPaidAplicado = record.operation_id ? alreadyProcessed(op, key) : true;
+
+    // Observa o efeito 2 na própria entidade.
+    const lancamentos = await base44.asServiceRole.entities.LancamentoContaCorrente.filter({
+      asaas_event_key: key,
+    });
+    const lancamentoExiste = !!(lancamentos && lancamentos.length > 0);
+
+    const plan = planRecovery(record, { amountPaidAplicado, lancamentoExiste });
+
+    const effects = {
+      amount_paid: amountPaidAplicado,
+      lancamento_id: lancamentoExiste ? lancamentos[0].id : '',
+    };
+
+    if (plan.needsAmountPaid && record.operation_id) {
+      const r = await applyReceiptAtomically(base44, record.operation_id, key, record.value);
+      effects.amount_paid = amountPaidAplicado || r.applied;
+      if (r.applied) await recomputeDerived(base44, record.operation_id);
+    }
+
+    if (plan.needsLancamento) {
+      // SEM force. A exclusividade não vem da reivindicação do diário (que,
+      // com várias linhas para o mesmo evento, pode ser dividida entre duas
+      // execuções): vem da reivindicação da OPERAÇÃO, que é indivisível.
+      // Assim, mesmo que duas execuções recuperem o mesmo evento por linhas
+      // diferentes, só uma cria o lançamento.
+      const l = await ensureLancamento(base44, key, record.lancamento_payload, {
+        targetId,
+        nowIso: now,
+        staleIso: stale,
+      });
+      effects.lancamento_id = l.lancamento ? l.lancamento.id : '';
+
+      if (!effects.lancamento_id) {
+        // A reivindicação está retida — por outra execução, ou por uma execução
+        // morta cuja validade ainda não expirou. Não é falha: é espera. O
+        // evento volta à fila SEM contar tentativa, e a próxima passagem
+        // retoma assim que a reivindicação expirar.
+        await base44.asServiceRole.entities.AsaasEvento.updateMany(
+          { id: record.id, status: EVENTO_STATUS.EM_RECUPERACAO },
+          { $set: { status: EVENTO_STATUS.FALHA, error: 'extrato pendente: reivindicação retida' } }
+        );
+        return { event_key: key, recuperado: false, pendente: 'lancamento' };
+      }
+    }
+
+    // Fecha a linha reivindicada. Outras linhas do mesmo evento seguem na fila
+    // e convergem depois — a criação do lançamento é idempotente.
+    await base44.asServiceRole.entities.AsaasEvento.updateMany(
+      { id: record.id, status: EVENTO_STATUS.EM_RECUPERACAO },
+      { $set: { status: EVENTO_STATUS.CONTABILIZADO, accounted_at: now, error: '', effects } }
+    );
+
+    return {
+      event_key: key,
+      recuperado: plan.needsAmountPaid || plan.needsLancamento,
+      effects,
+    };
+  } catch (e) {
+    // Falha na própria recuperação: devolve o evento à fila. Ao esgotar as
+    // tentativas vira falha_definitiva e sai da recuperação automática.
+    const tentativas = (Number(record.attempts) || 0) + 1;
+    try {
+      await base44.asServiceRole.entities.AsaasEvento.updateMany(
+        { id: record.id, status: EVENTO_STATUS.EM_RECUPERACAO },
+        {
+          $set: {
+            status: proximoEstadoFalha(tentativas),
+            error: String((e && e.message) || e).slice(0, 500),
+            attempts: tentativas,
+          },
+        }
+      );
+    } catch (_) {
+      /* o diário é best-effort — nunca mascara o erro original */
+    }
+    throw e;
   }
-
-  await base44.asServiceRole.entities.AsaasEvento.update(record.id, {
-    status: EVENTO_STATUS.CONTABILIZADO,
-    accounted_at: nowIso,
-    error: '',
-    effects,
-  });
-
-  return {
-    event_key: key,
-    recuperado: plan.needsAmountPaid || plan.needsLancamento,
-    effects,
-  };
 }
 /* @sync:end */

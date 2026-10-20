@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
       const operation = await base44.entities.Operation.get(operation_id);
       if (!operation) return Response.json({ error: 'Operação não encontrada' }, { status: 404 });
 
-      const schedule = Array.isArray(operation.installment_schedule) ? [...operation.installment_schedule] : [];
+      const schedule = Array.isArray(operation.installment_schedule) ? operation.installment_schedule : [];
       const idx = Number(parcela_index);
       const inst = schedule[idx];
       if (!inst) return Response.json({ error: 'Parcela não encontrada' }, { status: 404 });
@@ -37,18 +37,24 @@ Deno.serve(async (req) => {
         }
       }
 
-      // Clear charge fields so the parcela can be regenerated later
-      schedule[idx] = {
-        ...inst,
-        asaas_payment_id: '',
-        asaas_payment_status: 'deleted',
-        asaas_invoice_url: '',
-        asaas_pix_qrcode: '',
-        asaas_boleto_line: '',
-        asaas_billing_type: inst.asaas_billing_type || '',
-      };
-
-      await base44.entities.Operation.update(operation_id, { installment_schedule: schedule });
+      // Clear charge fields so the parcela can be regenerated later.
+      // D1.3 — escrita ATÔMICA por parcela (`$set` pontilhado): regravar o
+      // array inteiro podia apagar o pagamento de OUTRA parcela da mesma
+      // operação, gravado entre a leitura e a escrita.
+      const base = `installment_schedule.${idx}`;
+      await base44.entities.Operation.updateMany(
+        { id: operation_id },
+        {
+          $set: {
+            [`${base}.asaas_payment_id`]: '',
+            [`${base}.asaas_payment_status`]: 'deleted',
+            [`${base}.asaas_invoice_url`]: '',
+            [`${base}.asaas_pix_qrcode`]: '',
+            [`${base}.asaas_boleto_line`]: '',
+            [`${base}.asaas_billing_type`]: inst.asaas_billing_type || '',
+          },
+        }
+      );
 
       return Response.json({
         success: true,
