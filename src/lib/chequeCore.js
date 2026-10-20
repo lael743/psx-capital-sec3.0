@@ -374,3 +374,79 @@ export async function runIdempotentBatch(items, { isAlreadyDone, run, onProgress
   if (onProgress) onProgress(list.length, list.length, null);
   return { ok, skipped, failed };
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * M2 — RESOLUÇÃO DE CHEQUE DEVOLVIDO
+ *
+ * Um cheque devolvido se resolve de três formas: substituído por outro cheque,
+ * prorrogado ou pago. As três compartilham o MESMO evento de resolução (uma
+ * chave por cheque) e a taxa de devolução entra na operação UMA única vez —
+ * ela já nasce incorporada a `total_receivable`, nunca somada de novo.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+export const STATUS_DEVOLVIDO = 'devolvido';
+
+/** Estados que só existem DEPOIS de uma resolução. */
+export const STATUS_RESOLVIDO = Object.freeze([
+  'resolvido_pago',
+  'resolvido_substituido',
+  'resolvido_prorrogado',
+]);
+
+export const MODALIDADES_RESOLUCAO = Object.freeze(['novo_cheque', 'prorrogacao', 'pagamento']);
+
+/** Modalidade → status final do cheque devolvido. */
+export const STATUS_POR_MODALIDADE = Object.freeze({
+  novo_cheque: 'resolvido_substituido',
+  prorrogacao: 'resolvido_prorrogado',
+  pagamento: 'resolvido_pago',
+});
+
+/**
+ * Chave do evento de RESOLUÇÃO de um cheque.
+ * É a MESMA string já usada antes da M2 como chave do recebimento
+ * (`resolucao_cheque:<id>`) — nenhuma resolução antiga é recreditada.
+ */
+export function resolucaoEventKey(chequeId) {
+  return `resolucao_cheque:${chequeId}`;
+}
+
+/**
+ * Chave do evento de RECEBIMENTO DA TAXA — distinta da chave da resolução.
+ * Efeitos financeiros diferentes nunca compartilham chave: receber a taxa não
+ * pode ser confundido com receber o principal, inclusive quando vêm juntos.
+ */
+export function taxaDevolucaoEventKey(chequeId) {
+  return `cheque_taxa_devolucao:${chequeId}`;
+}
+
+export function round2(valor) {
+  return Math.round((Number(valor) || 0) * 100) / 100;
+}
+
+/** Dias inteiros entre duas datas; 0 quando a segunda não é posterior. */
+export function diasEntreDatas(base, alvo) {
+  if (!base || !alvo) return 0;
+  const dias = Math.round((new Date(alvo) - new Date(base)) / 86400000);
+  return Number.isFinite(dias) && dias > 0 ? dias : 0;
+}
+
+/**
+ * Juros da prorrogação de um cheque devolvido.
+ * FÓRMULA PRESERVADA do modal original: taxa diária arredondada PARA CIMA em
+ * duas casas de percentual e depois convertida para fração.
+ */
+export function calcJurosResolucao(valor, taxaMensalPct, dias) {
+  const taxa = Number(taxaMensalPct) || 0;
+  const d = Number(dias) || 0;
+  if (taxa <= 0 || d <= 0) return 0;
+  const diaria = Math.ceil((taxa / 30) * 100) / 100 / 100;
+  return round2((Number(valor) || 0) * diaria * d);
+}
+
+/** Parte da taxa de devolução que ainda NÃO foi recebida. */
+export function taxaDevolucaoPendente(cheque) {
+  const total = Number(cheque && cheque.taxa_devolucao) || 0;
+  const recebida = Number(cheque && cheque.taxa_recebida) || 0;
+  return Math.max(0, round2(total - recebida));
+}

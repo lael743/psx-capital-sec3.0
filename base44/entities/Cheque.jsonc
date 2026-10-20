@@ -148,6 +148,41 @@
     },
     "notes": {
       "type": "string"
+    },
+    "resolucao_evento": {
+      "type": "string",
+      "description": "M2 \u2014 chave do evento de RESOLU\u00c7\u00c3O deste cheque devolvido (`resolucao_cheque:<id>`). Gravada na MESMA escrita do compare-and-swap que troca 'devolvido' por 'resolvido_*': \u00e9 o que garante que s\u00f3 uma resolu\u00e7\u00e3o vence, que nenhuma execu\u00e7\u00e3o repetida reaplica efeito e que a taxa entra na opera\u00e7\u00e3o uma \u00fanica vez. Ver resolverChequeDevolvido em base44/shared/chequeEventFlow.js."
+    },
+    "resolvido_em": {
+      "type": "string",
+      "format": "date",
+      "description": "M2 \u2014 data em que a resolu\u00e7\u00e3o foi registrada. N\u00e3o confundir com compensation_date (vencimento) nem com a data de pagamento quando a modalidade \u00e9 novo cheque ou prorroga\u00e7\u00e3o."
+    },
+    "taxa_devolucao": {
+      "type": "number",
+      "default": 0,
+      "description": "M2 \u2014 taxa de devolu\u00e7\u00e3o aplicada na resolu\u00e7\u00e3o. J\u00c1 est\u00e1 incorporada a Operation.total_receivable (e ao balance_due derivado): NUNCA somar de novo. Antes da M2 esse valor s\u00f3 existia como texto em notes/return_reason."
+    },
+    "taxa_aplicada": {
+      "type": "boolean",
+      "default": false,
+      "description": "M2 \u2014 true quando a taxa_devolucao j\u00e1 foi incorporada a Operation.total_receivable por esta resolu\u00e7\u00e3o. \u00c9 reivindicado por compare-and-swap ANTES do incremento, no padr\u00e3o de claimBankEvent: a reivindica\u00e7\u00e3o existe para impedir soma dupla; uma reivindica\u00e7\u00e3o \u00f3rf\u00e3 (processo morto antes do incremento) deixa a taxa SUB contabilizada \u2014 nunca duplicada \u2014 e \u00e9 diagnosticada por inspecionarCheque."
+    },
+    "taxa_recebida": {
+      "type": "number",
+      "default": 0,
+      "description": "M2 \u2014 parcela da taxa de devolu\u00e7\u00e3o efetivamente RECEBIDA. \u00c9 o que distingue a taxa cobrada da taxa paga: taxa_recebida < taxa_devolucao significa taxa ainda em aberto. N\u00c3O \u00e9 inferida da resolu\u00e7\u00e3o \u2014 s\u00f3 avan\u00e7a com recebimento real, junto do principal ou em evento pr\u00f3prio."
+    },
+    "taxa_eventos": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "M2 \u2014 chaves dos eventos de recebimento da taxa (`cheque_taxa_devolucao:<id>`), gravadas na MESMA escrita do compare-and-swap que incrementa taxa_recebida, no padr\u00e3o de applied_ledger_keys. Impedem receber a mesma taxa duas vezes, inclusive quando ela vem junto do principal."
+    },
+    "substitui_cheque_id": {
+      "type": "string",
+      "description": "M2 \u2014 preenchido no cheque SUBSTITUTO: id do cheque devolvido que ele substitui. \u00c9 a identidade da emiss\u00e3o: uma resolu\u00e7\u00e3o interrompida e repetida n\u00e3o cria um segundo substituto."
     }
   },
   "required": [

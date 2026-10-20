@@ -54,6 +54,9 @@ export const ACOES_BANCARIAS = Object.freeze({
   ESTORNAR_CHEQUE: 'estornar_cheque',
   INSPECIONAR_CHEQUE: 'inspecionar_cheque',
   RECUPERAR_CHEQUE: 'recuperar_lancamento_cheque',
+  // M2 — resolução de cheque devolvido e recebimento da taxa.
+  RESOLVER_CHEQUE: 'resolver_cheque',
+  RECEBER_TAXA_CHEQUE: 'receber_taxa_cheque',
 });
 
 /** Chave de página usada pelo controle de acesso existente (pageAccess.js). */
@@ -69,6 +72,11 @@ const PAGINAS_POR_ACAO = Object.freeze({
   [ACOES_BANCARIAS.COMPENSAR_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
   [ACOES_BANCARIAS.ESTORNAR_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
   [ACOES_BANCARIAS.INSPECIONAR_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
+  // M2 — a resolução do cheque devolvido nasce na página de Cheques; o
+  // recebimento da taxa pode ser registrado na tela de Cheques ou no detalhe
+  // do banco (é onde a conta está aberta).
+  [ACOES_BANCARIAS.RESOLVER_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
+  [ACOES_BANCARIAS.RECEBER_TAXA_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
 });
 
 /** Ações que um operador com a página liberada pode executar. */
@@ -80,6 +88,8 @@ const OPERACIONAIS = Object.freeze([
   ACOES_BANCARIAS.COMPENSAR_CHEQUE,
   ACOES_BANCARIAS.ESTORNAR_CHEQUE,
   ACOES_BANCARIAS.INSPECIONAR_CHEQUE,
+  ACOES_BANCARIAS.RESOLVER_CHEQUE,
+  ACOES_BANCARIAS.RECEBER_TAXA_CHEQUE,
 ]);
 
 /** Ações de natureza administrativa (reversão e recuperação). */

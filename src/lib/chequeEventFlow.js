@@ -44,10 +44,19 @@
 
 import {
   STATUS_COMPENSADO,
+  STATUS_DEVOLVIDO,
+  STATUS_RESOLVIDO,
+  STATUS_POR_MODALIDADE,
   makeEventToken,
   chequeEventKeys,
   compensationTokenOf,
   claimCheque,
+  resolucaoEventKey,
+  taxaDevolucaoEventKey,
+  taxaDevolucaoPendente,
+  calcJurosResolucao,
+  diasEntreDatas,
+  round2,
 } from './chequeCore.js';
 import { applyBankDelta, LEDGER_KEYS_FIELD } from './bankLedger.js';
 
