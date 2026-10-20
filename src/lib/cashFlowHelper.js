@@ -128,3 +128,33 @@ export async function createOperationalCashFlow(params) {
   const created = await base44.entities.CashFlow.create(data);
   return { status: 'created', cashflow: created };
 }
+
+/**
+ * Cria o lançamento de caixa de um evento de CHEQUE com origem estável.
+ *
+ * A origem (source_type + source_id) é a chave de idempotência: reprocessar o
+ * mesmo evento nunca produz um segundo lançamento.
+ *
+ * Categorias de cheque são simultaneamente operacionais (exigem operation_id)
+ * e bancárias (exigem bank_id). Cheques sem operação vinculada não podem
+ * satisfazer a exigência de operation_id, então o caminho é explicitamente
+ * separado — mas com a MESMA chave de idempotência, garantindo o mesmo
+ * resultado em ambos os casos.
+ *
+ * @returns {Promise<{status: 'created'|'duplicate', cashflow?: object, existing?: object}>}
+ */
+export async function createChequeCashFlow(params) {
+  if (params.operation_id) {
+    return createOperationalCashFlow(params);
+  }
+  const existing = await base44.entities.CashFlow.filter({
+    source_type: params.source_type,
+    source_id: params.source_id,
+  });
+  if (existing && existing.length > 0) {
+    return { status: 'duplicate', existing: existing[0] };
+  }
+  const { type = 'entrada', operation_id, ...rest } = params;
+  const created = await base44.entities.CashFlow.create({ type, ...rest });
+  return { status: 'created', cashflow: created };
+}

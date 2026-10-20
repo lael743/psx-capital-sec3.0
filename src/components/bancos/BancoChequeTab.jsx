@@ -8,7 +8,8 @@ import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import Pagination from '@/components/ui/Pagination';
 import { logAction } from '@/lib/audit';
 import { syncChequeCompensation, syncChequeReversal } from '@/lib/syncCheque';
-import { createOperationalCashFlow } from '@/lib/cashFlowHelper';
+import { createChequeCashFlow } from '@/lib/cashFlowHelper';
+import { shouldCompensate, shouldRevert, runIdempotentBatch } from '@/lib/chequeCore';
 
 export default function BancoChequeTab({ banco, cheques = [], onReload }) {
   const [selected, setSelected] = useState(new Set());
@@ -18,6 +19,7 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
   const [retornarModal, setRetornarModal] = useState(null);
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState(null); // { current, total, label }
+  const [bulkResult, setBulkResult] = useState(null); // { ok, skipped, failed }
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [sort, setSort] = useState({ field: 'compensation_date', dir: 'asc' });
@@ -60,7 +62,7 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
     setSaving(true);
     // Idempotência: impede compensar duas vezes o mesmo cheque
     const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
-    if (fresh && fresh.status === 'compensado') {
+    if (!shouldCompensate(fresh)) {
       setSaving(false);
       refresh();
       return;
@@ -76,7 +78,7 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
     await base44.entities.Banco.update(banco.id, {
       current_balance: (banco.current_balance || 0) + (cheque.value || 0),
     });
-    const cfParams = {
+    await createChequeCashFlow({
       category: 'compensacao_cheque',
       amount: cheque.value,
       date: dataComp,
@@ -84,16 +86,9 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
       method: 'cheque',
       bank_id: banco.id,
       source_type: 'cheque_compensacao',
-      source_id: cheque.id,
-    };
-    if (cheque.operation_id) {
-      await createOperationalCashFlow({ ...cfParams, operation_id: cheque.operation_id });
-    } else {
-      const existing = await base44.entities.CashFlow.filter({ source_type: 'cheque_compensacao', source_id: cheque.id });
-      if (!existing || existing.length === 0) {
-        await base44.entities.CashFlow.create({ type: 'entrada', ...cfParams });
-      }
-    }
+      source_id: `${cheque.id}#${dataComp}`,
+      operation_id: cheque.operation_id,
+    });
     await logAction({
       action: 'compensar',
       entity: 'Cheque',
@@ -109,66 +104,91 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
 
   const doBulkCompensar = async (chequesToProcess) => {
     setSaving(true);
+    setBulkResult(null);
     setProgress({ current: 0, total: chequesToProcess.length, label: 'Iniciando...' });
-    let newBalance = banco.current_balance || 0;
-    for (let i = 0; i < chequesToProcess.length; i++) {
-      const cheque = chequesToProcess[i];
-      setProgress({ current: i, total: chequesToProcess.length, label: `Cheque #${cheque.check_number} — ${cheque.client_name}` });
-      const dataComp = today();
-      await base44.entities.Cheque.update(cheque.id, {
-        status: 'compensado',
-        compensated_at: dataComp,
-        custody_status: 'financeiro',
-        deposited_bank_id: banco.id,
-        deposited_bank_name: banco.name,
-      });
-      const cfParams = {
-        category: 'compensacao_cheque',
-        amount: cheque.value,
-        date: dataComp,
-        description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
-        method: 'cheque',
-        bank_id: banco.id,
-        source_type: 'cheque_compensacao',
-        source_id: cheque.id,
-      };
-      if (cheque.operation_id) {
-        await createOperationalCashFlow({ ...cfParams, operation_id: cheque.operation_id });
-      } else {
-        const existing = await base44.entities.CashFlow.filter({ source_type: 'cheque_compensacao', source_id: cheque.id });
-        if (!existing || existing.length === 0) {
-          await base44.entities.CashFlow.create({ type: 'entrada', ...cfParams });
-        }
-      }
-      await logAction({
-        action: 'compensar',
-        entity: 'Cheque',
-        entityId: cheque.id,
-        description: `[Lote] Cheque #${cheque.check_number} (${cheque.client_name}) compensado no banco ${banco.name} — Valor: ${formatCurrency(cheque.value)}`,
-        before: { status: 'pendente' },
-        after: { status: 'compensado', banco: banco.name, valor: cheque.value },
-      });
-      await syncChequeCompensation({ ...cheque, status: 'compensado' });
-      newBalance += cheque.value || 0;
-    }
-    setProgress({ current: chequesToProcess.length, total: chequesToProcess.length, label: 'Concluído' });
-    await base44.entities.Banco.update(banco.id, { current_balance: newBalance });
+
+    // O saldo do banco é aplicado POR ITEM. Se o lote falhar no meio, o saldo
+    // reflete exatamente os cheques efetivamente compensados — nunca fica
+    // dessincronizado por um crédito em massa no final.
+    let saldoAtual = banco.current_balance || 0;
+
+    const res = await runIdempotentBatch(chequesToProcess, {
+      // Guarda de idempotência por item: cheque já compensado é pulado.
+      isAlreadyDone: async (cheque) => {
+        const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
+        return !shouldCompensate(fresh);
+      },
+      run: async (cheque) => {
+        const dataComp = today();
+        await base44.entities.Cheque.update(cheque.id, {
+          status: 'compensado',
+          compensated_at: dataComp,
+          custody_status: 'financeiro',
+          deposited_bank_id: banco.id,
+          deposited_bank_name: banco.name,
+        });
+        saldoAtual += cheque.value || 0;
+        await base44.entities.Banco.update(banco.id, { current_balance: saldoAtual });
+        await createChequeCashFlow({
+          category: 'compensacao_cheque',
+          amount: cheque.value,
+          date: dataComp,
+          description: `Compensação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco.name})`,
+          method: 'cheque',
+          bank_id: banco.id,
+          source_type: 'cheque_compensacao',
+          source_id: `${cheque.id}#${dataComp}`,
+          operation_id: cheque.operation_id,
+        });
+        await logAction({
+          action: 'compensar',
+          entity: 'Cheque',
+          entityId: cheque.id,
+          description: `[Lote] Cheque #${cheque.check_number} (${cheque.client_name}) compensado no banco ${banco.name} — Valor: ${formatCurrency(cheque.value)}`,
+          before: { status: 'pendente' },
+          after: { status: 'compensado', banco: banco.name, valor: cheque.value },
+        });
+        await syncChequeCompensation({ ...cheque, status: 'compensado', compensated_at: dataComp });
+      },
+      onProgress: (current, total, cheque) => setProgress({
+        current,
+        total,
+        label: cheque ? `Cheque #${cheque.check_number} — ${cheque.client_name}` : 'Concluído',
+      }),
+    });
+
+    setProgress(null);
     setSelected(new Set());
     setSaving(false);
-    setProgress(null);
+    if (res.failed.length > 0) {
+      setBulkResult({ ok: res.ok.length, skipped: res.skipped.length, failed: res.failed });
+    }
     refresh();
   };
 
   const doReverter = async (cheque) => {
     setSaving(true);
+    // Só estorna o que está de fato compensado — impede estorno duplicado
+    const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
+    if (!shouldRevert(fresh)) {
+      setSaving(false);
+      refresh();
+      return;
+    }
+    // A origem do estorno identifica a COMPENSAÇÃO sendo revertida (cheque +
+    // data efetiva). Assim, estornar o mesmo evento duas vezes não duplica o
+    // lançamento, mas uma nova compensação em outra data pode ser estornada.
+    const chaveCompensacao = fresh.compensated_at || fresh.compensation_date || 'sem-data';
+
     await base44.entities.Cheque.update(cheque.id, {
       status: 'pendente',
+      compensated_at: null, // limpa o estado de compensação; o histórico fica no AuditLog
       custody_status: 'financeiro',
     });
     await base44.entities.Banco.update(banco.id, {
       current_balance: (banco.current_balance || 0) - (cheque.value || 0),
     });
-    await base44.entities.CashFlow.create({
+    await createChequeCashFlow({
       type: 'saida',
       category: 'estorno_compensacao',
       amount: cheque.value,
@@ -177,7 +197,8 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
       method: 'cheque',
       bank_id: banco.id,
       source_type: 'cheque_estorno_compensacao',
-      source_id: cheque.id,
+      source_id: `${cheque.id}#${chaveCompensacao}`,
+      operation_id: cheque.operation_id,
     });
     await logAction({
       action: 'reverter',
@@ -383,6 +404,22 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
         </div>
       )}
 
+      {/* Resultado de lote com falhas parciais */}
+      {bulkResult && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-900 space-y-1">
+          <div className="font-semibold">
+            Lote concluído com falhas — {bulkResult.ok} compensado(s), {bulkResult.skipped} já compensado(s), {bulkResult.failed.length} com falha.
+          </div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {bulkResult.failed.map(f => (
+              <li key={f.item.id}>#{f.item.check_number} — {f.item.client_name}: {f.error}</li>
+            ))}
+          </ul>
+          <div>Os cheques com falha permanecem pendentes e podem ser reprocessados com segurança.</div>
+          <button onClick={() => setBulkResult(null)} className="font-semibold underline">Fechar</button>
+        </div>
+      )}
+
       {/* Resumo */}
       <div className="grid grid-cols-4 gap-3">
         {[
@@ -516,7 +553,7 @@ export default function BancoChequeTab({ banco, cheques = [], onReload }) {
                 </th>
                 <th className="text-left px-3 py-3 text-xs font-medium text-muted-foreground">
                   <button onClick={() => toggleSort('compensation_date')} className="flex items-center gap-1 hover:text-foreground">
-                    Compensação <SortIcon field="compensation_date" />
+                    Vencimento <SortIcon field="compensation_date" />
                   </button>
                 </th>
                 <th className="px-3 py-3 w-10"></th>

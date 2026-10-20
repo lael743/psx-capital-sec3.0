@@ -352,7 +352,7 @@ export default function TesourariaTab({ cheques, operacoes = [], usuarios = [], 
                 </th>
                 <th className="text-left px-3 py-3">
                   <button onClick={() => toggleSort('compensation_date')} className="flex items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors">
-                    Compensação <SortIcon field="compensation_date" />
+                    Vencimento <SortIcon field="compensation_date" />
                   </button>
                 </th>
                 <th className="text-left px-3 py-3 text-xs font-medium text-muted-foreground">Custódia</th>

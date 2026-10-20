@@ -4,7 +4,8 @@ import { base44 } from '@/api/base44Client';
 import { Save, Plus, Filter, RefreshCw, Download, X, CalendarClock, DollarSign, Package, CheckCircle2, Image, MoreVertical, AlertTriangle, Search, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { logAction } from '@/lib/audit';
 import { syncChequeCompensation } from '@/lib/syncCheque';
-import { createOperationalCashFlow } from '@/lib/cashFlowHelper';
+import { createChequeCashFlow } from '@/lib/cashFlowHelper';
+import { shouldCompensate } from '@/lib/chequeCore';
 import { fetchAll } from '@/lib/fetchAll';
 import TesourariaTab from '@/components/cheque/TesourariaTab';
 import StatusBadge from '@/components/ui/StatusBadge';
@@ -214,7 +215,7 @@ function CompensarChequeModal({ cheque, onClose, onSaved }) {
     // Idempotência: relê o cheque para impedir compensação duplicada
     // (evita crédito em dobro no banco e CashFlow duplicado)
     const fresh = await base44.entities.Cheque.get(cheque.id).catch(() => null);
-    if (fresh && fresh.status === 'compensado') {
+    if (!shouldCompensate(fresh)) {
       setSaving(false);
       onSaved();
       onClose();
@@ -232,7 +233,10 @@ function CompensarChequeModal({ cheque, onClose, onSaved }) {
       await base44.entities.Banco.update(bancoId, {
         current_balance: (banco.current_balance || 0) + (cheque.value || 0),
       });
-      const cfParams = {
+      // Origem estável = cheque + data efetiva desta compensação.
+      // Reprocessar o mesmo evento não duplica; compensar novamente após um
+      // estorno (em outra data) gera uma origem nova e é permitido.
+      await createChequeCashFlow({
         category: 'compensacao_cheque',
         amount: cheque.value,
         date: data,
@@ -240,16 +244,9 @@ function CompensarChequeModal({ cheque, onClose, onSaved }) {
         method: 'cheque',
         bank_id: bancoId,
         source_type: 'cheque_compensacao',
-        source_id: cheque.id,
-      };
-      if (cheque.operation_id) {
-        await createOperationalCashFlow({ ...cfParams, operation_id: cheque.operation_id });
-      } else {
-        const existing = await base44.entities.CashFlow.filter({ source_type: 'cheque_compensacao', source_id: cheque.id });
-        if (!existing || existing.length === 0) {
-          await base44.entities.CashFlow.create({ type: 'entrada', ...cfParams });
-        }
-      }
+        source_id: `${cheque.id}#${data}`,
+        operation_id: cheque.operation_id,
+      });
     }
 
     await logAction({
@@ -351,8 +348,8 @@ function ChequeForm({ onSaved }) {
       action: 'create',
       entity: 'Cheque',
       entityId: created.id,
-      description: `Cheque #${form.check_number.toUpperCase()} criado para ${client?.name || ''} — Banco: ${form.bank_name.toUpperCase()} — Valor: R$ ${form.value} — Compensação: ${form.compensation_date}`,
-      after: { banco: form.bank_name, numero: form.check_number, valor: parseFloat(form.value), compensacao: form.compensation_date },
+      description: `Cheque #${form.check_number.toUpperCase()} criado para ${client?.name || ''} — Banco: ${form.bank_name.toUpperCase()} — Valor: R$ ${form.value} — Vencimento: ${form.compensation_date}`,
+      after: { banco: form.bank_name, numero: form.check_number, valor: parseFloat(form.value), vencimento: form.compensation_date },
     });
     setSaving(false);
     if (onSaved) onSaved();
@@ -391,7 +388,7 @@ function ChequeForm({ onSaved }) {
           <input className="input-field" type="number" step="0.01" value={form.value} onChange={e => set('value', e.target.value)} placeholder="0,00" />
         </div>
         <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data de Compensação *</label>
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Vencimento *</label>
           <input className="input-field" type="date" value={form.compensation_date} onChange={e => set('compensation_date', e.target.value)} />
         </div>
         <div className="sm:col-span-2">
@@ -512,7 +509,7 @@ export default function Cheques() {
       { key: 'bank_name', label: 'Banco' },
       { key: 'check_number', label: 'Nº Cheque' },
       { key: 'value', label: 'Valor (R$)' },
-      { key: 'compensation_date', label: 'Data Compensação' },
+      { key: 'compensation_date', label: 'Vencimento' },
       { key: 'status', label: 'Status' },
       { key: 'return_reason', label: 'Motivo Devolução' },
       { key: 'notes', label: 'Observações' },
@@ -719,7 +716,7 @@ export default function Cheques() {
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">Compensação — De</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">Vencimento — De</label>
                 <input type="date" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)}
                   className="text-sm border border-border rounded-lg px-3 py-2 h-9" />
               </div>
@@ -793,7 +790,7 @@ export default function Cheques() {
                         { label: 'Cliente', field: 'client_name', align: 'left' },
                         { label: 'Nº', field: 'check_number', align: 'left' },
                         { label: 'Valor', field: 'value', align: 'right' },
-                        { label: 'Compensação', field: 'compensation_date', align: 'left' },
+                        { label: 'Vencimento', field: 'compensation_date', align: 'left' },
                         { label: 'Status', field: null, align: 'left' },
                         { label: 'Operação por', field: null, align: 'left' },
                       ].map(col => (
@@ -939,7 +936,7 @@ export default function Cheques() {
         <div className="bg-white border border-border rounded-xl overflow-hidden">
           {monthlyData.length === 0 ? (
             <div className="py-16 text-center text-muted-foreground">
-              <p className="font-medium">Nenhum cheque com data de compensação futura</p>
+              <p className="font-medium">Nenhum cheque com vencimento futuro</p>
             </div>
           ) : (
             <table className="w-full text-sm">

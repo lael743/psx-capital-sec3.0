@@ -1,102 +1,100 @@
 /**
- * syncChequeCompensation
+ * Sincronização cheque ↔ operação ↔ parcela.
  *
- * Ao compensar um cheque vinculado a uma operação do tipo "cheque":
- *  1. Marca a parcela correspondente (por data de compensação) como paga
- *  2. Recalcula amount_paid e balance_due da operação
- *  3. Atualiza o status da operação (quitado se tudo pago, atrasado, etc.)
- *  4. Atualiza os totais no cliente (total_paid, total_profit)
+ * Toda a lógica de alocação e de cálculo é PURA e vive em `@/lib/chequeCore`
+ * (ver testes em src/lib/chequeCore.test.js). Este módulo apenas lê, aplica e
+ * grava.
  *
- * Chame esta função APÓS compensar o cheque no banco de dados.
- *
- * @param {object} cheque - O cheque recém compensado (com operation_id, value, compensation_date)
- * @param {import('@/api/base44Client').base44} base44Instance
+ * REGRA OFICIAL DAS DATAS:
+ *   compensation_date = VENCIMENTO do título.
+ *   compensated_at    = data EFETIVA da compensação.
+ *   A alocação cheque↔parcela usa o VENCIMENTO (compensation_date).
  */
 import { base44 } from '@/api/base44Client';
 import { daysOverdue } from '@/lib/finance';
+import {
+  allocateInstallments,
+  sumCompensated,
+  computeBalanceDue,
+  computeOperationStatus,
+  computeRealizedProfit,
+} from '@/lib/chequeCore';
 
-export async function syncChequeCompensation(cheque) {
-  if (!cheque.operation_id) return;
+/** Recalcula os totais do cliente a partir de todas as suas operações. */
+async function syncClientTotals(clientId, opId, totalPaidForOp) {
+  if (!clientId) return;
+  const client = await base44.entities.Client.get(clientId).catch(() => null);
+  if (!client) return;
+  const clientOps = await base44.entities.Operation.filter({ client_id: clientId });
+  const totalPaid = clientOps.reduce(
+    (s, o) => s + (o.id === opId ? totalPaidForOp : (o.amount_paid || 0)), 0
+  );
+  const totalProfit = clientOps.reduce((s, o) => s + (o.realized_profit || 0), 0);
+  await base44.entities.Client.update(clientId, { total_paid: totalPaid, total_profit: totalProfit });
+}
 
-  let op;
-  try {
-    op = await base44.entities.Operation.get(cheque.operation_id);
-  } catch (e) {
-    // Operação não existe mais (deletada) — nada a sincronizar
-    return;
-  }
-  if (!op) return;
+/**
+ * Aplica à operação o estado derivado do conjunto atual de cheques.
+ * Usada tanto pela compensação quanto pelo estorno — mesma regra, mesmo cálculo.
+ *
+ * @param {object} op - operação já carregada
+ * @param {Array}  allCheques - todos os cheques da operação (estado ATUAL)
+ * @param {string} [excludeChequeId] - cheque a desconsiderar (estorno)
+ */
+async function applyOperationState(op, allCheques, excludeChequeId) {
+  const installment_schedule = allocateInstallments(op.installment_schedule, allCheques, excludeChequeId);
+  const totalCompensado = sumCompensated(allCheques, excludeChequeId);
+  const balance_due = computeBalanceDue(op.total_receivable, totalCompensado);
+  const isQuitado = balance_due <= 0.01;
 
-  // Busca todos os cheques da operação para calcular o total compensado
-  const allCheques = await base44.entities.Cheque.filter({ operation_id: cheque.operation_id });
-
-  // Reconstrói o installment_schedule marcando como paga cada parcela cujo cheque foi compensado
-  let updatedSchedule = op.installment_schedule || [];
-  if (updatedSchedule.length > 0) {
-    // Casar parcelas por data de vencimento == data de compensação do cheque
-    // Alocação um-a-um: cada cheque compensado marca no máximo UMA parcela.
-    // Evita que duas parcelas com a mesma data de vencimento sejam baixadas
-    // por um único cheque (ou que um cheque marque duas parcelas).
-    const compensated = allCheques.filter(c => c.status === 'compensado');
-    const usedChequeIds = new Set();
-    updatedSchedule = updatedSchedule.map((inst) => {
-      const linkedCheque = compensated.find(c =>
-        !usedChequeIds.has(c.id) && c.compensation_date === inst.due_date
-      );
-      if (linkedCheque) usedChequeIds.add(linkedCheque.id);
-      const isPaid = !!linkedCheque;
-      return { ...inst, paid: isPaid, status: isPaid ? 'pago' : (inst.status || 'pendente') };
-    });
-  }
-
-  // Total compensado = soma dos valores de face dos cheques compensados desta operação
-  const totalCompensado = allCheques
-    .filter(c => c.status === 'compensado')
-    .reduce((s, c) => s + (c.valor_face || c.value || 0), 0);
-
-  const totalReceivable = op.total_receivable || 0;
-  const balanceDue = Math.max(0, totalReceivable - totalCompensado);
-  const isQuitado = balanceDue <= 0.01;
-
-  // Calcula status da operação
-  let newStatus = op.status;
-  if (isQuitado) {
-    newStatus = 'quitado';
-  } else if (op.status === 'pendente_contrato') {
-    // Não muda status de operações ainda não ativas
-  } else {
-    const overdue = daysOverdue(op.due_date);
-    if (overdue === 0) newStatus = 'ativo';
-    else if (overdue <= 60) newStatus = 'atrasado';
-    else newStatus = 'inadimplente';
-  }
-
-  const realizedProfit = isQuitado
-    ? totalCompensado - (op.gross_value || 0) - (op.capital_cost || 0)
-    : op.realized_profit || 0;
+  const status = computeOperationStatus(op, isQuitado, daysOverdue(op.due_date));
+  const realized_profit = computeRealizedProfit(op, totalCompensado, isQuitado);
 
   await base44.entities.Operation.update(op.id, {
     amount_paid: totalCompensado,
-    balance_due: balanceDue,
-    status: newStatus,
-    realized_profit: realizedProfit,
-    installment_schedule: updatedSchedule,
+    balance_due,
+    status,
+    realized_profit,
+    installment_schedule,
   });
 
-  // Atualiza totais do cliente
-  if (op.client_id) {
-    const client = await base44.entities.Client.get(op.client_id);
-    if (client) {
-      // Recalcula total_paid e total_profit somando todas operações do cliente
-      const clientOps = await base44.entities.Operation.filter({ client_id: op.client_id });
-      const totalPaid = clientOps.reduce((s, o) => s + (o.id === op.id ? totalCompensado : (o.amount_paid || 0)), 0);
-      const totalProfit = clientOps.reduce((s, o) => s + (o.id === op.id ? realizedProfit : (o.realized_profit || 0)), 0);
-      await base44.entities.Client.update(op.client_id, {
-        total_paid: totalPaid,
-        total_profit: totalProfit,
-      });
-    }
+  await syncClientTotals(op.client_id, op.id, totalCompensado);
+}
+
+async function loadOperation(operationId) {
+  if (!operationId) return null;
+  try {
+    return await base44.entities.Operation.get(operationId);
+  } catch (e) {
+    // Operação não existe mais (deletada) — nada a sincronizar
+    return null;
   }
+}
+
+/**
+ * Ao compensar um cheque vinculado a uma operação:
+ *  1. Aloca as parcelas de forma determinística (uma parcela por cheque)
+ *  2. Recalcula amount_paid, balance_due e o status da operação
+ *  3. Atualiza os totais do cliente
+ *
+ * Chame APÓS compensar o cheque no banco de dados.
+ */
+export async function syncChequeCompensation(cheque) {
+  const op = await loadOperation(cheque.operation_id);
+  if (!op) return;
+  const allCheques = await base44.entities.Cheque.filter({ operation_id: cheque.operation_id });
+  await applyOperationState(op, allCheques);
+}
+
+/**
+ * Reverso da compensação: reaplica o mesmo cálculo desconsiderando o cheque
+ * estornado. Não zera o lucro realizado de forma indiscriminada.
+ */
+export async function syncChequeReversal(cheque) {
+  const op = await loadOperation(cheque.operation_id);
+  if (!op) return;
+  const allCheques = await base44.entities.Cheque.filter({ operation_id: cheque.operation_id });
+  await applyOperationState(op, allCheques, cheque.id);
 }
 
 /**
@@ -142,70 +140,4 @@ export async function syncTitulosByOperacaoStatus(op) {
   await base44.entities.Cheque.bulkUpdate(
     toUpdate.map((c) => ({ id: c.id, status: targetStatus }))
   );
-}
-
-/**
- * syncChequeReversal
- * Reverso da compensação: desmarca a parcela como paga e recalcula.
- */
-export async function syncChequeReversal(cheque) {
-  if (!cheque.operation_id) return;
-
-  let op;
-  try {
-    op = await base44.entities.Operation.get(cheque.operation_id);
-  } catch (e) {
-    // Operação não existe mais (deletada) — nada a sincronizar
-    return;
-  }
-  if (!op) return;
-
-  const allCheques = await base44.entities.Cheque.filter({ operation_id: cheque.operation_id });
-
-  let updatedSchedule = op.installment_schedule || [];
-  if (updatedSchedule.length > 0) {
-    // Mesma alocação um-a-um do fluxo de compensação, para reversão consistente.
-    const compensated = allCheques.filter(c => c.status === 'compensado' && c.id !== cheque.id);
-    const usedChequeIds = new Set();
-    updatedSchedule = updatedSchedule.map((inst) => {
-      const linkedCheque = compensated.find(c =>
-        !usedChequeIds.has(c.id) && c.compensation_date === inst.due_date
-      );
-      if (linkedCheque) usedChequeIds.add(linkedCheque.id);
-      const isPaid = !!linkedCheque;
-      return { ...inst, paid: isPaid, status: isPaid ? 'pago' : 'pendente' };
-    });
-  }
-
-  const totalCompensado = allCheques
-    .filter(c => c.status === 'compensado' && c.id !== cheque.id)
-    .reduce((s, c) => s + (c.valor_face || c.value || 0), 0);
-
-  const totalReceivable = op.total_receivable || 0;
-  const balanceDue = Math.max(0, totalReceivable - totalCompensado);
-
-  const overdue = daysOverdue(op.due_date);
-  let newStatus = overdue === 0 ? 'ativo' : overdue <= 60 ? 'atrasado' : 'inadimplente';
-  if (op.status === 'pendente_contrato') newStatus = op.status;
-
-  await base44.entities.Operation.update(op.id, {
-    amount_paid: totalCompensado,
-    balance_due: balanceDue,
-    status: newStatus,
-    realized_profit: 0,
-    installment_schedule: updatedSchedule,
-  });
-
-  if (op.client_id) {
-    const client = await base44.entities.Client.get(op.client_id);
-    if (client) {
-      const clientOps = await base44.entities.Operation.filter({ client_id: op.client_id });
-      const totalPaid = clientOps.reduce((s, o) => s + (o.id === op.id ? totalCompensado : (o.amount_paid || 0)), 0);
-      const totalProfit = clientOps.reduce((s, o) => s + (o.realized_profit || 0), 0);
-      await base44.entities.Client.update(op.client_id, {
-        total_paid: totalPaid,
-        total_profit: totalProfit,
-      });
-    }
-  }
 }
