@@ -523,12 +523,22 @@ async function reconciliarCobranca(base44, o) {
     return { encontrado: false, indeterminado: true };
   }
 
-  const vivo = (encontrados || []).find((p) => p.status !== 'deleted');
-  if (!vivo) return { encontrado: false, indeterminado: false };
+  // MAIS DE UMA cobrança para a mesma referência é ANOMALIA. A decisão é:
+  // adotar a de identificador estável (menor id) e NUNCA emitir uma terceira.
+  // Ordenar por id remove a dependência da ordem em que o provedor devolve a
+  // lista — antes, `.find()` adotava uma cobrança arbitrária, e duas retomadas
+  // podiam adotar cobranças diferentes. A anomalia é reportada em `duplicadas`
+  // para ficar observável em vez de silenciosa.
+  const vivos = (encontrados || [])
+    .filter((p) => p && p.status !== 'deleted')
+    .sort((a, b) => String(a.id).localeCompare(String(b.id)));
+
+  if (vivos.length === 0) return { encontrado: false, indeterminado: false };
+  const vivo = vivos[0];
 
   const r = await persistirCobranca(base44, { ...o, charge: vivo });
   if (!r.ok) return { encontrado: false, indeterminado: true };
-  return { encontrado: true, payment_id: vivo.id };
+  return { encontrado: true, payment_id: vivo.id, duplicadas: vivos.length };
 }
 
 /** Grava a cobrança e os campos da parcela na MESMA escrita condicional. */

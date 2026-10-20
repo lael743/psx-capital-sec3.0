@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import { X, Plus } from 'lucide-react';
+import { X, Plus, AlertTriangle } from 'lucide-react';
 import { formatCurrency, daysBetween, today } from '@/lib/finance';
 import { calcTituloRow, calcTitulosTotais } from '@/components/operacao/wizard/TituloInlineTable';
 import { logAction } from '@/lib/audit';
+import { conflitosFinanceiros, mergeFinancialFields, mensagemConflito, salvarCondicionado } from '@/lib/scheduleWrite';
 
 const STORAGE_KEY = 'psx_company_settings';
 function getSettings() {
@@ -23,6 +24,7 @@ export default function AdicionarTituloModal({ operacao, cheques, onClose, onSav
     outras_despesas: '',
   });
   const [saving, setSaving] = useState(false);
+  const [conflito, setConflito] = useState('');
 
   const rate = operacao.rate || 0;
   const startDate = operacao.start_date || today();
@@ -43,7 +45,7 @@ export default function AdicionarTituloModal({ operacao, cheques, onClose, onSav
     const outrasDespesas = parseFloat(form.outras_despesas) || 0;
 
     // Create the cheque
-    await base44.entities.Cheque.create({
+    const novoCheque = await base44.entities.Cheque.create({
       operation_id: operacao.id,
       client_id: operacao.client_id,
       client_name: operacao.client_name,
@@ -95,18 +97,39 @@ export default function AdicionarTituloModal({ operacao, cheques, onClose, onSav
       };
     });
 
-    await base44.entities.Operation.update(operacao.id, {
+    // Relê o estado: esta tela pode ter sido aberta antes de um recebimento,
+    // de uma cobrança ou de uma compensação de cheque.
+    const atual = await base44.entities.Operation.get(operacao.id);
+    const persistido = atual?.installment_schedule || [];
+
+    const conflitos = conflitosFinanceiros(installmentSchedule, persistido);
+    if (conflitos.length > 0) {
+      // Desfaz o título recém-criado para não deixar registro órfão.
+      if (novoCheque?.id) await base44.entities.Cheque.delete(novoCheque.id).catch(() => {});
+      setConflito(mensagemConflito(conflitos));
+      setSaving(false);
+      return;
+    }
+
+    const gravado = await salvarCondicionado(base44, operacao.id, atual?.amount_paid, {
       gross_value: valorLiquido,
       net_value: valorLiquido,
       total_receivable: totals.totalFace,
-      balance_due: totals.totalFace - (operacao.amount_paid || 0),
+      balance_due: totals.totalFace - (Number(atual?.amount_paid) || 0),
       days: totalDays,
       due_date: lastDueDate,
       installments: validTitulos.length,
       installment_value: totals.totalFace / (validTitulos.length || 1),
-      installment_schedule: installmentSchedule,
+      installment_schedule: mergeFinancialFields(installmentSchedule, persistido),
       projected_profit: totals.totalFace - valorLiquido,
     });
+
+    if (!gravado) {
+      if (novoCheque?.id) await base44.entities.Cheque.delete(novoCheque.id).catch(() => {});
+      setConflito('A operação recebeu um pagamento enquanto esta tela estava aberta. Recarregue a página e refaça a alteração.');
+      setSaving(false);
+      return;
+    }
 
     await logAction({
       action: 'add_titulo',
@@ -198,6 +221,13 @@ export default function AdicionarTituloModal({ operacao, cheques, onClose, onSav
             </div>
           </section>
         </div>
+
+        {conflito && (
+          <div className="mx-5 mb-2 flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-red-800">{conflito}</p>
+          </div>
+        )}
 
         {/* Summary Footer */}
         <div className="border-t border-border p-5 bg-gray-50/50 shrink-0">

@@ -1,9 +1,11 @@
 /**
  * Sincronização cheque ↔ operação ↔ parcela.
  *
- * Toda a lógica de alocação e de cálculo é PURA e vive em `@/lib/chequeCore`
- * (ver testes em src/lib/chequeCore.test.js). Este módulo apenas lê, aplica e
- * grava.
+ * A alocação e o cálculo são PUROS e vivem em `@/lib/chequeCore`.
+ * A ESCRITA vive em `@/lib/chequeWrite` — módulo sem imports de app, testável
+ * isoladamente contra um banco simulado (src/lib/scheduleIntegrity.test.js).
+ *
+ * Este módulo apenas conecta os dois ao cliente da plataforma.
  *
  * REGRA OFICIAL DAS DATAS:
  *   compensation_date = VENCIMENTO do título.
@@ -11,73 +13,8 @@
  *   A alocação cheque↔parcela usa o VENCIMENTO (compensation_date).
  */
 import { base44 } from '@/api/base44Client';
-import { daysOverdue } from '@/lib/finance';
-import {
-  allocateInstallments,
-  sumCompensated,
-  computeAmountPaid,
-  computeBalanceDue,
-  computeOperationStatus,
-  computeRealizedProfit,
-} from '@/lib/chequeCore';
-
-/** Recalcula os totais do cliente a partir de todas as suas operações. */
-async function syncClientTotals(clientId, opId, totalPaidForOp) {
-  if (!clientId) return;
-  const client = await base44.entities.Client.get(clientId).catch(() => null);
-  if (!client) return;
-  const clientOps = await base44.entities.Operation.filter({ client_id: clientId });
-  const totalPaid = clientOps.reduce(
-    (s, o) => s + (o.id === opId ? totalPaidForOp : (o.amount_paid || 0)), 0
-  );
-  const totalProfit = clientOps.reduce((s, o) => s + (o.realized_profit || 0), 0);
-  await base44.entities.Client.update(clientId, { total_paid: totalPaid, total_profit: totalProfit });
-}
-
-/**
- * Aplica à operação o estado derivado do conjunto atual de cheques.
- * Usada tanto pela compensação quanto pelo estorno — mesma regra, mesmo cálculo.
- *
- * @param {object} op - operação já carregada
- * @param {Array}  allCheques - todos os cheques da operação (estado ATUAL)
- * @param {string} [excludeChequeId] - cheque a desconsiderar (estorno)
- */
-async function applyOperationState(op, allCheques, excludeChequeId) {
-  const installment_schedule = allocateInstallments(op.installment_schedule, allCheques, excludeChequeId);
-  const totalCheques = sumCompensated(allCheques, excludeChequeId);
-
-  // `amount_paid` acumula cheques compensados E pagamentos independentes
-  // (registro manual, baixa de lançamento, Asaas). Recalcular o campo inteiro a
-  // partir dos cheques APAGARIA esses pagamentos — era o defeito do estorno.
-  // Aplicamos apenas a DIFERENÇA da parcela de cheques.
-  const amount_paid = computeAmountPaid(op, totalCheques);
-  const balance_due = computeBalanceDue(op.total_receivable, amount_paid);
-  const isQuitado = balance_due <= 0.01;
-
-  const status = computeOperationStatus(op, isQuitado, daysOverdue(op.due_date));
-  const realized_profit = computeRealizedProfit(op, amount_paid, isQuitado);
-
-  await base44.entities.Operation.update(op.id, {
-    amount_paid,
-    cheques_compensados_total: totalCheques,
-    balance_due,
-    status,
-    realized_profit,
-    installment_schedule,
-  });
-
-  await syncClientTotals(op.client_id, op.id, amount_paid);
-}
-
-async function loadOperation(operationId) {
-  if (!operationId) return null;
-  try {
-    return await base44.entities.Operation.get(operationId);
-  } catch (e) {
-    // Operação não existe mais (deletada) — nada a sincronizar
-    return null;
-  }
-}
+import { sumCompensated } from '@/lib/chequeCore';
+import { sincronizarOperacao } from '@/lib/chequeWrite';
 
 /**
  * Ao compensar um cheque vinculado a uma operação:
@@ -88,10 +25,7 @@ async function loadOperation(operationId) {
  * Chame APÓS compensar o cheque no banco de dados.
  */
 export async function syncChequeCompensation(cheque) {
-  const op = await loadOperation(cheque.operation_id);
-  if (!op) return;
-  const allCheques = await base44.entities.Cheque.filter({ operation_id: cheque.operation_id });
-  await applyOperationState(op, allCheques);
+  return sincronizarOperacao(base44, cheque.operation_id);
 }
 
 /**
@@ -99,10 +33,7 @@ export async function syncChequeCompensation(cheque) {
  * estornado. Não zera o lucro realizado de forma indiscriminada.
  */
 export async function syncChequeReversal(cheque) {
-  const op = await loadOperation(cheque.operation_id);
-  if (!op) return;
-  const allCheques = await base44.entities.Cheque.filter({ operation_id: cheque.operation_id });
-  await applyOperationState(op, allCheques, cheque.id);
+  return sincronizarOperacao(base44, cheque.operation_id, cheque.id);
 }
 
 /**

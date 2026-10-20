@@ -5,6 +5,7 @@ import { ViewModeProvider } from '@/lib/viewMode';
 import { ArrowLeft, ArrowRight, Save, FileText, AlertTriangle, X, FileDown } from 'lucide-react';
 import { formatCurrency, daysBetween, today } from '@/lib/finance';
 import { logAction } from '@/lib/audit';
+import { bloqueioEdicaoCompleta } from '@/lib/scheduleWrite';
 import { emptyTitulo, calcTitulosTotais, calcTituloRow } from '@/components/operacao/wizard/TituloInlineTable';
 import WizardStepper from '@/components/operacao/wizard/WizardStepper';
 import StepCedenteProduto from '@/components/operacao/wizard/StepCedenteProduto';
@@ -47,6 +48,7 @@ export default function OperacaoForm() {
   const [selectedClient, setSelectedClient] = useState(null);
   const [clientUsedLimit, setClientUsedLimit] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState('');
   const [isDirty, setIsDirty] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [draftBanner, setDraftBanner] = useState(false);
@@ -315,6 +317,8 @@ export default function OperacaoForm() {
 
     let operationId = editId;
     if (editId) {
+      const bloqueio = await bloqueioEdicaoCompleta(base44, editId);
+      if (bloqueio) { setSaveError(bloqueio); setSaving(false); return; }
       await base44.entities.Operation.update(editId, payload);
       await base44.entities.AssinaturaVinculo.deleteMany({ operation_id: editId });
       await logAction({
@@ -450,6 +454,8 @@ export default function OperacaoForm() {
 
     let operationId = editId;
     if (editId) {
+      const bloqueio = await bloqueioEdicaoCompleta(base44, editId);
+      if (bloqueio) { setSaveError(bloqueio); setSaving(false); return; }
       await base44.entities.Operation.update(editId, payload);
       await base44.entities.Cheque.deleteMany({ operation_id: editId });
       await logAction({
@@ -604,6 +610,16 @@ export default function OperacaoForm() {
         </div>
 
         {/* Draft banner */}
+        {saveError && (
+          <div className="mb-4 shrink-0 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <p className="text-sm text-red-800 flex-1">{saveError}</p>
+            <button onClick={() => setSaveError('')} className="p-1.5 rounded-lg hover:bg-red-100 text-red-600">
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
+
         {draftBanner && (
           <div className="mb-4 shrink-0 flex items-center justify-between gap-3 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
             <div className="flex items-center gap-2 text-sm text-amber-800">

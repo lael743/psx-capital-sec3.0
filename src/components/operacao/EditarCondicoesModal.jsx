@@ -4,6 +4,7 @@ import { X, AlertTriangle, Check } from 'lucide-react';
 import { formatCurrency, daysBetween, today } from '@/lib/finance';
 import { calcTituloRow, calcTitulosTotais } from '@/components/operacao/wizard/TituloInlineTable';
 import { logAction } from '@/lib/audit';
+import { conflitosFinanceiros, mergeFinancialFields, mensagemConflito, salvarCondicionado } from '@/lib/scheduleWrite';
 
 const STORAGE_KEY = 'psx_company_settings';
 function getSettings() {
@@ -20,6 +21,7 @@ export default function EditarCondicoesModal({ operacao, cheques, onClose, onSav
   });
   const [reason, setReason] = useState('');
   const [saving, setSaving] = useState(false);
+  const [conflito, setConflito] = useState('');
 
   const startDate = operacao.start_date || today();
   const interestType = operacao.interest_type || 'simples';
@@ -108,7 +110,20 @@ export default function EditarCondicoesModal({ operacao, cheques, onClose, onSav
       };
     });
 
-    await base44.entities.Operation.update(operacao.id, {
+    // Esta tela pode ter sido aberta ANTES de um recebimento, de uma emissão de
+    // boleto ou de uma compensação de cheque. Relê o estado e devolve o que é
+    // financeiro: o formulário só escreve termos comerciais.
+    const atual = await base44.entities.Operation.get(operacao.id);
+    const persistido = atual?.installment_schedule || [];
+
+    const conflitos = conflitosFinanceiros(installmentSchedule, persistido);
+    if (conflitos.length > 0) {
+      setConflito(mensagemConflito(conflitos));
+      setSaving(false);
+      return;
+    }
+
+    const gravado = await salvarCondicionado(base44, operacao.id, atual?.amount_paid, {
       rate: newRate,
       float_dias: newFloat,
       tarifa_operacao: newTarifaOp,
@@ -116,12 +131,18 @@ export default function EditarCondicoesModal({ operacao, cheques, onClose, onSav
       gross_value: afterLiquido,
       net_value: afterLiquido,
       total_receivable: afterTotals.totalFace,
-      balance_due: afterTotals.totalFace - (operacao.amount_paid || 0),
+      balance_due: afterTotals.totalFace - (Number(atual?.amount_paid) || 0),
       days: totalDays,
       projected_profit: afterTotals.totalFace - afterLiquido,
-      installment_schedule: installmentSchedule,
+      installment_schedule: mergeFinancialFields(installmentSchedule, persistido),
       installment_value: afterTotals.totalFace / (validTitulos.length || 1),
     });
+
+    if (!gravado) {
+      setConflito('A operação recebeu um pagamento enquanto esta tela estava aberta. Recarregue a página e refaça a alteração.');
+      setSaving(false);
+      return;
+    }
 
     await logAction({
       action: 'edit_conditions',
@@ -243,6 +264,13 @@ export default function EditarCondicoesModal({ operacao, cheques, onClose, onSav
             <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
             <p className="text-xs text-amber-800">Esta alteração afetará o valor líquido da operação e será registrada no histórico.</p>
           </div>
+
+          {conflito && (
+            <div className="flex items-start gap-2 p-3 rounded-lg bg-red-50 border border-red-200">
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+              <p className="text-xs text-red-800">{conflito}</p>
+            </div>
+          )}
         </div>
 
         {/* Footer */}
