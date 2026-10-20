@@ -1,43 +1,72 @@
 /**
- * D3 — ADAPTADOR base44 do motor de transferências.
+ * D4.1 — ADAPTADOR DO FRONTEND PARA A FUNÇÃO DE SERVIDOR.
  *
- * Toda a regra (idempotência, concorrência, recuperação) vive em
- * `transferEngine.js`, que é puro quanto a transporte e testável. Este arquivo
- * só liga o motor às entidades reais.
+ * A movimentação NÃO acontece mais neste lado. Aqui só se monta o pedido e se
+ * lê a resposta da função `transferenciaBancaria`, que autentica pelo token,
+ * confere o papel e roda o motor com privilégio de serviço.
+ *
+ * ── UM ÚNICO CAMINHO ───────────────────────────────────────────────────────
+ *
+ * Não existe caminho alternativo. Se o servidor recusar, falhar ou estiver
+ * indisponível, NADA é movimentado — não há fallback que volte a escrever saldo
+ * pelo navegador. Um fallback silencioso seria pior que a falha: ele contornaria
+ * exatamente a autorização que esta fase instalou, e só apareceria no pior
+ * momento.
+ *
+ * O navegador envia apenas o que pode escolher: origem, destino, valor, data,
+ * descrição e o identificador do pedido. Identidade e papel saem do token no
+ * servidor; nomes de conta e saldos são lidos do banco de dados lá.
  */
 import { base44 } from '@/api/base44Client';
-import { criarMotor } from '@/lib/transferEngine';
 
-export { novoTransferId } from '@/lib/bankLedger';
+async function chamar(payload) {
+  let resposta;
+  try {
+    resposta = await base44.functions.invoke('transferenciaBancaria', payload);
+  } catch (e) {
+    // Erros do servidor chegam como HTTP 403/400: a mensagem útil está no corpo.
+    const doServidor = e && e.response && e.response.data && e.response.data.erro;
+    throw new Error(doServidor || (e && e.message) || 'Não foi possível falar com o servidor.');
+  }
 
-const motor = criarMotor({
-  bancoStore: {
-    updateWhere: (query, update) => base44.entities.Banco.updateMany(query, update),
-    get: (id) => base44.entities.Banco.get(id),
-  },
-  diarioStore: {
-    filter: (query) => base44.entities.TransferenciaBancaria.filter(query),
-    create: (data) => base44.entities.TransferenciaBancaria.create(data),
-    updateWhere: (query, update) => base44.entities.TransferenciaBancaria.updateMany(query, update),
-  },
-  cashflowStore: {
-    filter: (query) => base44.entities.CashFlow.filter(query),
-    create: (data) => base44.entities.CashFlow.create(data),
-  },
+  const dados = (resposta && resposta.data) || {};
+  if (dados.ok === false) throw new Error(dados.erro || 'Operação recusada pelo servidor.');
+  return dados;
+}
+
+export const executarTransferencia = (p) => chamar({
+  acao: 'transferir',
+  transferId: p.transferId,
+  fromBankId: p.fromBank && p.fromBank.id,
+  toBankId: p.toBank && p.toBank.id,
+  amount: p.amount,
+  data: p.date,
+  descricao: p.description,
 });
 
-export const executarTransferencia = (params) => motor.executarTransferencia(params);
-export const estornarTransferencia = (params) => motor.estornarTransferencia(params);
-export const recuperarTransferencia = (params) => motor.recuperarTransferencia(params);
+export const estornarTransferencia = (p) => chamar({
+  acao: 'estornar',
+  transferId: p.transferId,
+  data: p.date,
+  descricao: p.description,
+});
 
-/** Diagnóstico completo por perna: saldo, lançamento, dono e idade da reivindicação. */
-export const inspecionarTransferencia = (params) => motor.inspecionarTransferencia(params);
+export const recuperarTransferencia = (p) => chamar({
+  acao: 'recuperar',
+  transferId: p.transferId,
+  data: p.date,
+});
 
-/** Recuperação de reivindicações órfãs — nunca toca em saldo. */
-export const recuperarLancamentosOrfaos = (params) => motor.recuperarLancamentosOrfaos(params);
+export const inspecionarTransferencia = (p) => chamar({
+  acao: 'inspecionar',
+  transferId: p.transferId,
+});
 
-/** Lê o diário e devolve o diagnóstico (saldo aplicado × lançamento presente). */
-export async function diagnosticarTransferencia(transferId) {
-  const doc = await motor.diarioExistente(transferId);
-  return motor.diagnosticar(doc);
-}
+export const recuperarLancamentosOrfaos = (p) => chamar({
+  acao: 'liberar_reivindicacao',
+  transferId: p.transferId,
+  confirmar: Boolean(p.confirmar),
+  forcar: Boolean(p.forcar),
+});
+
+export { novoTransferId } from '@/lib/bankLedger';

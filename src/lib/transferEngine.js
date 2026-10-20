@@ -27,6 +27,16 @@
  *     se o saldo foi aplicado e se o lançamento existe. `diagnosticar` expõe a
  *     perna "saldo aplicado, lançamento ausente" e `recuperar` refaz só o que
  *     falta — o saldo não é reaplicado porque a chave já está gravada.
+ *
+ * ── CÓPIA DUPLICADA ────────────────────────────────────────────────────────
+ *
+ * O motor existe em dois arquivos: `src/lib/transferEngine.js` (navegador) e
+ * `base44/shared/transferEngine.js` (função de servidor). A duplicação é
+ * obrigatória — o navegador não pode importar `base44/`, e a função de servidor
+ * não pode importar `src/`. Os dois são idênticos exceto pelo especificador do
+ * import do `bankLedger`; o teste D4.1.12 compara os bytes depois de normalizar
+ * essa única linha. Toda alteração de regra tem de ser feita nos DOIS arquivos
+ * — divergir aqui é divergir o saldo.
  */
 import {
   applyBankDelta,
