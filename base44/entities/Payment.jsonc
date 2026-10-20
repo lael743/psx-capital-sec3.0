@@ -12,7 +12,8 @@
       "type": "string"
     },
     "amount": {
-      "type": "number"
+      "type": "number",
+      "description": "Valor EFETIVAMENTE RECEBIDO neste evento (inclui a mora quando houver). \u00c9 a verdade de caixa do recebimento; n\u00e3o confundir com o valor aplicado \u00e0 obriga\u00e7\u00e3o, que \u00e9 limitado ao saldo em aberto."
     },
     "payment_date": {
       "type": "string",
@@ -24,7 +25,8 @@
         "pix",
         "dinheiro",
         "transferencia",
-        "cheque"
+        "cheque",
+        "outro"
       ],
       "default": "pix"
     },
@@ -38,6 +40,27 @@
     "is_partial": {
       "type": "boolean",
       "default": false
+    },
+    "event_key": {
+      "type": "string",
+      "description": "M3 \u2014 identidade do evento de recebimento (chave est\u00e1vel). \u00c9 gravada na MESMA escrita at\u00f4mica do incremento de Operation.amount_paid, em Operation.receipt_keys: a chave \u00e9 a prova de que o valor entrou uma \u00fanica vez. Reprocessar o mesmo evento \u2014 retry, duplo clique, recupera\u00e7\u00e3o \u2014 n\u00e3o cria um segundo registro nem soma de novo. Ver base44/shared/receiptEvent.js."
+    },
+    "acrescimo": {
+      "type": "number",
+      "default": 0,
+      "description": "M3 \u2014 parcela do recebimento que \u00e9 MORA (juros de atraso), n\u00e3o obriga\u00e7\u00e3o. Registrada separadamente para n\u00e3o se confundir com o principal recebido."
+    },
+    "origem": {
+      "type": "string",
+      "enum": [
+        "manual",
+        "baixa_manual"
+      ],
+      "description": "M3 \u2014 canal que originou o evento. O recebimento Asaas continua no extrato do cliente (LancamentoContaCorrente) e \u00e9 marcado em Operation.asaas_eventos_processados, n\u00e3o aqui."
+    },
+    "registrado_por": {
+      "type": "string",
+      "description": "M3 \u2014 e-mail do usu\u00e1rio autenticado que registrou o recebimento. Vem do token do servidor, nunca do corpo da requisi\u00e7\u00e3o."
     }
   },
   "required": [
@@ -46,5 +69,36 @@
     "amount",
     "payment_date",
     "method"
-  ]
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
 }

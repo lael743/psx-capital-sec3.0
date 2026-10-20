@@ -30,6 +30,11 @@
  * não bloqueia ninguém hoje: nenhuma tela expõe essas três ações — elas
  * existiam apenas como exportação de código, sem botão.
  *
+ * M3 — recebimento manual e baixa manual entraram como ações OPERACIONAIS: as
+ * duas telas que as disparam (Operações, Cedentes e Cobrança) continuam
+ * podendo registrar recebimento. O que muda é que agora a autorização é
+ * verificada no servidor, e não mais apenas escondida na tela.
+ *
  * ── CÓPIA DUPLICADA ────────────────────────────────────────────────────────
  *
  * Este módulo existe em dois arquivos: `src/lib/bankAuthorization.js` (testes
@@ -64,12 +69,21 @@ export const ACOES_BANCARIAS = Object.freeze({
   ESTORNAR_RESOLUCAO: 'estornar_resolucao_cheque',
   // M2.1 — recuperação da taxa: pode somar valor à obrigação, é administrativa.
   RECUPERAR_TAXA_CHEQUE: 'recuperar_taxa_cheque',
+  // M3 — recebimento que entra no agregado da operação. Antes era escrito
+  // direto pelo navegador, sem identidade de evento e sem autorização.
+  RECEBER_PAGAMENTO: 'receber_pagamento',
+  REGISTRAR_BAIXA: 'registrar_baixa',
 });
 
 /** Chave de página usada pelo controle de acesso existente (pageAccess.js). */
 export const PAGINA_BANCOS = 'bancos';
 /** M1 — tela de Cheques, que também dispara compensação e estorno. */
 export const PAGINA_CHEQUES = 'cheques';
+/** M3 — telas que registram recebimento de operação. */
+export const PAGINA_OPERACOES = 'operacoes';
+export const PAGINA_CLIENTES = 'clientes';
+export const PAGINA_COBRANCA = 'cobranca';
+export const PAGINAS_RECEBIMENTO = Object.freeze([PAGINA_OPERACOES, PAGINA_CLIENTES, PAGINA_COBRANCA]);
 
 /**
  * M1 — ações de cheque valem com QUALQUER uma das telas que as disparam:
@@ -87,6 +101,11 @@ const PAGINAS_POR_ACAO = Object.freeze({
   // M2 — a devolução física padrão nasce na tela de Cheques ou no detalhe do
   // banco. A EXCEÇÃO não passa por página: é administrativa (ver ADMINISTRATIVAS).
   [ACOES_BANCARIAS.DEVOLVER_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
+  // M3 — recebimento manual nasce no detalhe da operação; a baixa manual nasce
+  // na conta corrente do cliente. Cobrança também exibe o saldo e registra
+  // recebimento. Qualquer uma das três telas autoriza.
+  [ACOES_BANCARIAS.RECEBER_PAGAMENTO]: PAGINAS_RECEBIMENTO,
+  [ACOES_BANCARIAS.REGISTRAR_BAIXA]: PAGINAS_RECEBIMENTO,
 });
 
 /** Ações que um operador com a página liberada pode executar. */
@@ -101,6 +120,8 @@ const OPERACIONAIS = Object.freeze([
   ACOES_BANCARIAS.RESOLVER_CHEQUE,
   ACOES_BANCARIAS.RECEBER_TAXA_CHEQUE,
   ACOES_BANCARIAS.DEVOLVER_CHEQUE,
+  ACOES_BANCARIAS.RECEBER_PAGAMENTO,
+  ACOES_BANCARIAS.REGISTRAR_BAIXA,
 ]);
 
 /** Ações de natureza administrativa (reversão e recuperação). */
@@ -112,6 +133,12 @@ const ADMINISTRATIVAS = Object.freeze([
   ACOES_BANCARIAS.DEVOLVER_CHEQUE_EXCECAO,
   ACOES_BANCARIAS.ESTORNAR_RESOLUCAO,
   ACOES_BANCARIAS.RECUPERAR_TAXA_CHEQUE,
+]);
+
+/** Ações de recebimento (M3) — mensagem própria na recusa por página. */
+const RECEBIMENTOS = Object.freeze([
+  ACOES_BANCARIAS.RECEBER_PAGAMENTO,
+  ACOES_BANCARIAS.REGISTRAR_BAIXA,
 ]);
 
 /**
@@ -152,6 +179,14 @@ export function autorizarMovimentacaoBancaria(usuario, acao) {
   const paginas = Array.isArray(usuario.allowed_pages) ? usuario.allowed_pages : [];
   const exigidas = PAGINAS_POR_ACAO[acao] || [PAGINA_BANCOS];
   if (!exigidas.some((pagina) => paginas.includes(pagina))) {
+    if (RECEBIMENTOS.includes(acao)) {
+      return {
+        autorizado: false,
+        papel,
+        pagina_exigida: exigidas.join('|'),
+        motivo: 'Nenhuma das telas de recebimento (Operações, Cedentes, Cobrança) está liberada para este usuário.',
+      };
+    }
     if (exigidas.length === 1) {
       return {
         autorizado: false,

@@ -287,6 +287,21 @@ export function computeBalanceDue(totalReceivable, totalRecebido) {
 }
 
 /**
+ * M3 — REGRA ÚNICA DE QUITAÇÃO.
+ *
+ * Uma operação está quitada quando TEM obrigação e o saldo em aberto chegou a
+ * zero. A condição `total > 0` é deliberada: documento histórico sem obrigação
+ * calculável não é "quitado", é inconclusivo — e marcar quitação ali zeraria o
+ * lucro realizado de uma operação real com dado faltando.
+ *
+ * Usada pelos três canais de recebimento (cheque, Asaas, manual) para que o
+ * momento em que o lucro passa a ser realizado não dependa de quem recebeu.
+ */
+export function isOperationSettled(totalReceivable, totalRecebido) {
+  return (totalReceivable || 0) > 0 && computeBalanceDue(totalReceivable, totalRecebido) <= 0.01;
+}
+
+/**
  * Status da operação a partir do saldo e do atraso.
  * Não altera operações que ainda não foram ativadas (pendente_contrato).
  */

@@ -38,6 +38,7 @@ import {
   computeBalanceDue,
   computeOperationStatus,
   computeRealizedProfit,
+  isOperationSettled,
 } from './chequeCore.ts';
 
 export const MAX_TENTATIVAS_SYNC = 5;
@@ -150,7 +151,7 @@ export async function applyOperationState(api, op, allCheques, excludeChequeId) 
 
   const recebido = Number(atual.amount_paid) || 0;
   const balance_due = computeBalanceDue(atual.total_receivable, recebido);
-  const isQuitado = balance_due <= 0.01;
+  const isQuitado = isOperationSettled(atual.total_receivable, recebido);
   const status = computeOperationStatus(atual, isQuitado, daysOverdue(atual.due_date));
   const realized_profit = computeRealizedProfit(atual, recebido, isQuitado);
 

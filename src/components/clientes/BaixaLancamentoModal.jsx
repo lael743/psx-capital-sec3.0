@@ -3,6 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { X, CheckCircle, Loader2, AlertTriangle, CalendarClock } from 'lucide-react';
 import CurrencyInput from '@/components/ui/CurrencyInput';
 import { calcLateInterest, daysOverdue, formatCurrency, today } from '@/lib/finance';
+import { registrarRecebimento, novaChaveRecebimento } from '@/lib/recebimentoOps';
 
 export default function BaixaLancamentoModal({ lancamento, client, onClose, onSaved }) {
   const baseDebit = lancamento.debit_amount || lancamento.gross_value || 0;
@@ -13,6 +14,9 @@ export default function BaixaLancamentoModal({ lancamento, client, onClose, onSa
   const [amount, setAmount] = useState(String(remaining.toFixed(2)));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // M3 — identidade do evento de baixa: fixa na abertura, reusada no retry para
+  // que uma falha no meio do caminho não aplique a baixa duas vezes.
+  const [chave, setChave] = useState(() => novaChaveRecebimento('baixa_manual'));
 
   // Cálculo de juros de atraso (proporcional aos dias)
   const { days, interest, totalWithInterest } = useMemo(() => {
@@ -41,59 +45,66 @@ export default function BaixaLancamentoModal({ lancamento, client, onClose, onSa
     const newAmortized = amortized + val;
     const isFull = newAmortized >= totalWithInterest - 0.01;
 
-    // Se há juros de atraso, atualiza o débito para incorporar o juros
-    const updatePayload = {
-      amortized_amount: newAmortized,
-      status: isFull ? 'baixado' : 'parcialmente_baixado',
-    };
+    const observacao = `Baixa do lançamento ${lancamento.description || lancamento.id}`
+      + (isOverdue && interest > 0
+        ? ` — mora de ${days} dia(s) × ${(parseFloat(rate) || 0).toFixed(2)}% a.m. = ${formatCurrency(interest)}`
+        : '');
 
-    if (isOverdue && interest > 0) {
-      updatePayload.debit_amount = baseDebit + interest;
-      updatePayload.corrected_value = totalWithInterest;
-      updatePayload.days_calculated = days;
-      updatePayload.rate = parseFloat(rate) || 0;
-      updatePayload.notes = (lancamento.notes ? lancamento.notes + ' | ' : '') +
-        `[JUROS DE ATRASO] ${days} dias × ${parseFloat(rate).toFixed(2)}% a.m. = ${formatCurrency(interest)}. Débito corrigido: ${formatCurrency(baseDebit)} → ${formatCurrency(totalWithInterest)}.`;
-    }
-
-    await base44.entities.LancamentoContaCorrente.update(lancamento.id, updatePayload);
-
-    // Atualizar a Operação vinculada para que a sincronização automática preserve a baixa
-    // (a automação syncOperationsToContaCorrente reescreve amortized_amount = op.amount_paid)
-    if (lancamento.operation_id) {
-      const op = await base44.entities.Operation.get(lancamento.operation_id);
-      if (op) {
-        const addInterest = isOverdue && interest > 0 ? interest : 0;
-        const newTotalReceivable = (op.total_receivable || op.gross_value || 0) + addInterest;
-        const newPaid = (op.amount_paid || 0) + val;
-        const newBalanceDue = Math.max(0, newTotalReceivable - newPaid);
-        const opStatus = newPaid >= newTotalReceivable - 0.01
-          ? 'quitado'
-          : (op.due_date && op.due_date < today() ? 'atrasado' : 'ativo');
-        const opUpdate = {
-          amount_paid: newPaid,
-          balance_due: newBalanceDue,
-          status: opStatus,
-        };
-        if (addInterest > 0) {
-          opUpdate.total_receivable = newTotalReceivable;
-          opUpdate.notes = (op.notes ? op.notes + ' | ' : '') +
-            `[JUROS DE ATRASO] ${days} dias × ${parseFloat(rate).toFixed(2)}% a.m. = ${formatCurrency(interest)} incorporado ao total a receber em ${today()}.`;
-        }
-        await base44.entities.Operation.update(lancamento.operation_id, opUpdate);
+    try {
+      // ── Obrigação da operação: SÓ o servidor escreve ─────────────────────
+      // Antes esta tela somava juros a `total_receivable` e somava o valor em
+      // memória sobre `amount_paid`, sobrescrevendo recebimentos concorrentes.
+      // Agora é um evento com identidade: a mora vai declarada, com taxa e
+      // dias, e o servidor confere o cálculo antes de aplicá-la à obrigação.
+      if (lancamento.operation_id) {
+        await registrarRecebimento({
+          operationId: lancamento.operation_id,
+          valor: val,
+          data: today(),
+          metodo: lancamento.payment_method || 'outro',
+          observacao,
+          origem: 'baixa_manual',
+          chave,
+          jurosMora: isOverdue && interest > 0 ? interest : 0,
+          taxaMora: isOverdue && interest > 0 ? (parseFloat(rate) || 0) : 0,
+          diasAtraso: isOverdue && interest > 0 ? days : 0,
+        });
       }
-    } else {
-      // Lançamento manual (sem operação): recalcular saldos localmente
-      const allLancamentos = await base44.entities.LancamentoContaCorrente.filter({ client_id: lancamento.client_id }, 'date', 200);
-      let runningBalance = 0;
-      for (const l of allLancamentos) {
-        const debit = l.debit_amount || 0;
-        const credit = l.credit_amount || 0;
-        runningBalance = runningBalance - debit + credit;
-        if (l.balance_after !== runningBalance) {
-          await base44.entities.LancamentoContaCorrente.update(l.id, { balance_after: runningBalance });
+
+      // ── Extrato do cliente: correção comercial da própria linha ──────────
+      const updatePayload = {
+        amortized_amount: newAmortized,
+        status: isFull ? 'baixado' : 'parcialmente_baixado',
+      };
+
+      if (isOverdue && interest > 0) {
+        updatePayload.debit_amount = baseDebit + interest;
+        updatePayload.corrected_value = totalWithInterest;
+        updatePayload.days_calculated = days;
+        updatePayload.rate = parseFloat(rate) || 0;
+        updatePayload.notes = (lancamento.notes ? lancamento.notes + ' | ' : '') +
+          `[JUROS DE ATRASO] ${days} dias × ${parseFloat(rate).toFixed(2)}% a.m. = ${formatCurrency(interest)}. Débito corrigido: ${formatCurrency(baseDebit)} → ${formatCurrency(totalWithInterest)}.`;
+      }
+
+      await base44.entities.LancamentoContaCorrente.update(lancamento.id, updatePayload);
+
+      if (!lancamento.operation_id) {
+        // Lançamento manual (sem operação): recalcular saldos localmente
+        const allLancamentos = await base44.entities.LancamentoContaCorrente.filter({ client_id: lancamento.client_id }, 'date', 200);
+        let runningBalance = 0;
+        for (const l of allLancamentos) {
+          const debit = l.debit_amount || 0;
+          const credit = l.credit_amount || 0;
+          runningBalance = runningBalance - debit + credit;
+          if (l.balance_after !== runningBalance) {
+            await base44.entities.LancamentoContaCorrente.update(l.id, { balance_after: runningBalance });
+          }
         }
       }
+    } catch (err) {
+      setSaving(false);
+      setError(err.message || 'Não foi possível registrar a baixa.');
+      return;
     }
 
     setSaving(false);
@@ -172,7 +183,7 @@ export default function BaixaLancamentoModal({ lancamento, client, onClose, onSa
 
           <div>
             <label className="block text-xs font-semibold text-muted-foreground mb-1">Valor da Baixa</label>
-            <CurrencyInput value={amount} onChange={setAmount} />
+            <CurrencyInput value={amount} onChange={(v) => { setAmount(v); setChave(novaChaveRecebimento('baixa_manual')); }} />
           </div>
           {error && <p className="text-xs text-red-500">{error}</p>}
           <div className="flex gap-3 pt-2">

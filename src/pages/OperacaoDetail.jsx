@@ -17,6 +17,7 @@ import { DataTable, TableHead, Th, TableBody, Tr, Td, EmptyRow } from '@/compone
 import { formatCurrency, formatDate, daysOverdue } from '@/lib/finance';
 import { logAction } from '@/lib/audit';
 import { syncTitulosByOperacaoStatus } from '@/lib/syncCheque';
+import { registrarRecebimento, novaChaveRecebimento } from '@/lib/recebimentoOps';
 import { ViewModeProvider } from '@/lib/viewMode';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import ReciboModal from '@/components/ui/ReciboModal';
@@ -48,6 +49,9 @@ export default function OperacaoDetail() {
   const [tab, setTab] = useState('titulos');
   const [paymentForm, setPaymentForm] = useState({ amount: '', payment_date: new Date().toISOString().split('T')[0], method: 'pix', notes: '' });
   const [savingPayment, setSavingPayment] = useState(false);
+  // M3 — identidade do evento de recebimento (reusada no retry) e erro inline.
+  const [paymentKey, setPaymentKey] = useState(null);
+  const [paymentError, setPaymentError] = useState('');
   const [confirm, setConfirm] = useState({ open: false, title: '', message: '', onConfirm: null, variant: 'default' });
   const [reciboData, setReciboData] = useState({ open: false, payment: null });
   const [showContrato, setShowContrato] = useState(false);
@@ -82,33 +86,67 @@ export default function OperacaoDetail() {
 
   useEffect(() => {load();}, [id]);
 
+  /**
+   * M3 — o recebimento é aplicado NO SERVIDOR (`recebimentoManual`).
+   *
+   * Antes esta tela lia `amount_paid`, somava em memória e regravava, junto com
+   * `balance_due`, `status` e `realized_profit`: um cheque ou um pagamento
+   * Asaas concorrente era apagado sem erro nenhum.
+   *
+   * A chave do evento é fixada UMA vez por tentativa e reenviada igual em cada
+   * retry — é o que impede que uma falha de rede some o recebimento duas vezes.
+   */
   const doRegisterPayment = async () => {
     if (!paymentForm.amount || !op) return;
     setSavingPayment(true);
+    setPaymentError('');
     const amount = parseFloat(paymentForm.amount);
-    const newAmountPaid = (op.amount_paid || 0) + amount;
-    const newBalance = (op.total_receivable || 0) - newAmountPaid;
-    const isFullyPaid = newBalance <= 0.01;
-    const realizedProfit = isFullyPaid ? newAmountPaid - (op.gross_value || 0) - (op.capital_cost || 0) : op.realized_profit || 0;
+    const chave = paymentKey || novaChaveRecebimento('manual');
+    setPaymentKey(chave);
 
-    const created = await base44.entities.Payment.create({
-      operation_id: id, client_id: op.client_id, client_name: op.client_name,
-      amount, payment_date: paymentForm.payment_date, method: paymentForm.method,
-      notes: paymentForm.notes, is_partial: !isFullyPaid
-    });
+    try {
+      const r = await registrarRecebimento({
+        operationId: id,
+        valor: amount,
+        data: paymentForm.payment_date,
+        metodo: paymentForm.method,
+        observacao: paymentForm.notes,
+        origem: 'manual',
+        chave,
+      });
+      setPaymentKey(null);
 
-    const updatedOp = { ...op, amount_paid: newAmountPaid, balance_due: Math.max(0, newBalance), status: isFullyPaid ? 'quitado' : op.status, realized_profit: realizedProfit };
-    await base44.entities.Operation.update(id, { amount_paid: newAmountPaid, balance_due: Math.max(0, newBalance), status: isFullyPaid ? 'quitado' : op.status, realized_profit: realizedProfit });
-    if (isFullyPaid) { await syncTitulosByOperacaoStatus(updatedOp); }
-    await logAction({ action: 'payment', entity: 'Operation', entityId: id, description: `Pagamento de ${formatCurrency(amount)} registrado para ${op.client_name}` });
+      const paymentRecord = {
+        ...(r.pagamento || {}),
+        amount,
+        payment_date: paymentForm.payment_date,
+        method: paymentForm.method,
+        notes: paymentForm.notes,
+        client_name: op.client_name,
+      };
+      // Visão só para exibição — o estado gravado é o que o servidor devolveu.
+      const operationView = {
+        ...op,
+        amount_paid: (op.amount_paid || 0) + (r.valor_aplicado || 0),
+        balance_due: r.saldo_em_aberto,
+        status: r.status,
+        realized_profit: r.realized_profit,
+      };
 
-    const paymentRecord = { ...paymentForm, amount, id: created?.id, client_name: op.client_name };
-    setPaymentForm({ amount: '', payment_date: new Date().toISOString().split('T')[0], method: 'pix', notes: '' });
-    setSavingPayment(false);
-    setOp(updatedOp);
-    load();
-    const show = settings.show_receipt_after_payment !== false;
-    if (show) setReciboData({ open: true, payment: paymentRecord, operation: updatedOp });
+      if (r.status === 'quitado') { await syncTitulosByOperacaoStatus(operationView); }
+      await logAction({ action: 'payment', entity: 'Operation', entityId: id, description: `Pagamento de ${formatCurrency(amount)} registrado para ${op.client_name}` });
+
+      setPaymentForm({ amount: '', payment_date: new Date().toISOString().split('T')[0], method: 'pix', notes: '' });
+      setSavingPayment(false);
+      load();
+      const show = settings.show_receipt_after_payment !== false;
+      if (show) setReciboData({ open: true, payment: paymentRecord, operation: operationView });
+    } catch (e) {
+      // A chave é PRESERVADA: o retry reenvia o mesmo evento e o servidor
+      // completa o que faltou sem somar de novo.
+      setSavingPayment(false);
+      setPaymentError(e.message || 'Não foi possível registrar o recebimento.');
+    }
   };
 
   const registerPayment = () => {
@@ -339,7 +377,7 @@ export default function OperacaoDetail() {
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                       <div>
                         <label className="block text-xs font-medium text-muted-foreground mb-1">Valor (R$)</label>
-                        <input className="input-field" type="number" step="0.01" value={paymentForm.amount} onChange={(e) => setPaymentForm((f) => ({ ...f, amount: e.target.value }))} placeholder="0,00" />
+                        <input className="input-field" type="number" step="0.01" value={paymentForm.amount} onChange={(e) => { setPaymentForm((f) => ({ ...f, amount: e.target.value })); setPaymentKey(null); }} placeholder="0,00" />
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-muted-foreground mb-1">Data</label>
@@ -356,6 +394,9 @@ export default function OperacaoDetail() {
                         <input className="input-field" value={paymentForm.notes} onChange={(e) => setPaymentForm((f) => ({ ...f, notes: e.target.value }))} />
                       </div>
                     </div>
+                    {paymentError && (
+                      <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{paymentError}</p>
+                    )}
                     <div className="flex justify-between items-center pt-2 border-t border-border flex-wrap gap-2">
                       <div className="text-sm text-muted-foreground">Saldo: <strong className="text-foreground">{formatCurrency(balance)}</strong></div>
                       <button onClick={registerPayment} disabled={savingPayment || !paymentForm.amount} className="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-primary-foreground text-sm font-semibold rounded-lg disabled:opacity-50">

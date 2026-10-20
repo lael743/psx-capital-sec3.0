@@ -56,6 +56,7 @@
  * registrado, mas amount_paid não é tocado — exatamente como antes.
  */
 import { asaasEventKey, alreadyProcessed } from './operationAccounting.js';
+import { computeRealizedProfit, isOperationSettled } from './chequeCore.ts';
 import {
   EVENTO_STATUS,
   newEventoRecord,
@@ -99,9 +100,17 @@ export async function recomputeDerived(base44, operationId) {
   const totalRec = op.total_receivable || 0;
   const observado = Number(op.amount_paid) || 0;
   const balanceDue = totalRec > 0 ? Math.max(0, totalRec - observado) : 0;
+  const quitado = isOperationSettled(totalRec, observado);
 
-  const patch = { balance_due: balanceDue };
-  if (totalRec > 0 && balanceDue <= 0.01 && op.status !== 'quitado') patch.status = 'quitado';
+  // M3 — o lucro realizado sai do MESMO valor autoritativo, pela regra única de
+  // `chequeCore`. Antes este caminho gravava saldo e status e deixava
+  // `realized_profit` intacto: a mesma operação quitada por Asaas aparecia com
+  // lucro zero, enquanto a quitada por cheque aparecia com lucro correto.
+  const patch = {
+    balance_due: balanceDue,
+    realized_profit: computeRealizedProfit(op, observado, quitado),
+  };
+  if (quitado && op.status !== 'quitado') patch.status = 'quitado';
 
   // D1.4 — CONVERGÊNCIA DOS DERIVADOS.
   //

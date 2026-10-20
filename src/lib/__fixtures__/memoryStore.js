@@ -107,5 +107,10 @@ export function criarColecao(nome) {
     achar(id) {
       return this.docs.find((d) => d.id === id);
     },
+    async delete(id) {
+      await tick();
+      this.docs = this.docs.filter((d) => d.id !== id);
+      return { deleted: 1 };
+    },
   };
 }
