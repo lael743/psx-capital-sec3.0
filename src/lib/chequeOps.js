@@ -107,3 +107,9 @@ export const inspecionarResolucao = (cheque) => chamar({
   acao: 'inspecionar_resolucao',
   chequeId: cheque.id,
 });
+
+/** M2.1 — retoma somente etapas comprovadamente pendentes da taxa. */
+export const recuperarTaxaDevolucao = (cheque) => chamar({
+  acao: 'recuperar_taxa',
+  chequeId: cheque.id,
+});

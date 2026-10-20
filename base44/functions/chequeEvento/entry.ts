@@ -48,6 +48,7 @@ import {
   estornarResolucao,
   recuperarResolucao,
   inspecionarResolucao,
+  recuperarTaxaDevolucao,
   MOTIVOS,
 } from '../../shared/chequeEventFlow.js';
 import { createChequeCashFlow } from '../../shared/cashFlowHelper.ts';
@@ -69,6 +70,8 @@ const ACOES: Record<string, string> = {
   estornar_resolucao: ACOES_BANCARIAS.ESTORNAR_RESOLUCAO,
   recuperar_resolucao: ACOES_BANCARIAS.RECUPERAR_CHEQUE,
   inspecionar_resolucao: ACOES_BANCARIAS.INSPECIONAR_CHEQUE,
+  // M2.1 — retomada da taxa de devolução: pode somar valor à obrigação.
+  recuperar_taxa: ACOES_BANCARIAS.RECUPERAR_TAXA_CHEQUE,
 };
 
 const falha = (erro: string, status = 400, extra: Record<string, unknown> = {}) =>
@@ -91,11 +94,29 @@ async function recalcularSaldo(servico: any, operacaoId: string) {
   }
 }
 
-/** Soma a taxa ao total a receber. Chamado UMA vez por resolução. */
-async function ajustarTotalReceivable(servico: any, operacaoId: string, delta: number) {
-  if (!operacaoId || !delta) return;
-  await servico.entities.Operation.updateMany({ id: operacaoId }, { $inc: { total_receivable: delta } });
-  await recalcularSaldo(servico, operacaoId);
+/**
+ * Soma a taxa ao total a receber, UMA vez por chave de evento (M2.1).
+ *
+ * O `$inc` e o registro da chave ocorrem na MESMA escrita sobre UM documento:
+ * a execução que vencer o compare-and-swap aplica; a concorrente não casa o
+ * filtro e recebe `aplicado: false`. Essa chave é a PROVA de aplicação — a flag
+ * do cheque é apenas espelho. Sem chave, nada é escrito: somar sem identidade
+ * seria justamente o buraco que a M2.1 fecha.
+ */
+async function ajustarTotalReceivable(
+  servico: any,
+  operacaoId: string,
+  delta: number,
+  chave: string
+): Promise<{ aplicado: boolean }> {
+  if (!operacaoId || !delta || !chave) return { aplicado: false };
+  const res = await servico.entities.Operation.updateMany(
+    { id: operacaoId, taxa_incorporada_eventos: { $ne: chave } },
+    { $inc: { total_receivable: delta }, $push: { taxa_incorporada_eventos: chave } }
+  );
+  const aplicado = (Number(res && res.updated) || 0) > 0;
+  if (aplicado) await recalcularSaldo(servico, operacaoId);
+  return { aplicado };
 }
 
 /**
@@ -199,8 +220,8 @@ Deno.serve(async (req) => {
   const ioResolucao = {
     ...io,
     getOperacao: (id: string) => servico.entities.Operation.get(id).catch(() => null),
-    ajustarTotalReceivable: (operacaoId: string, delta: number) =>
-      ajustarTotalReceivable(servico, operacaoId, delta),
+    ajustarTotalReceivable: (operacaoId: string, delta: number, chave: string) =>
+      ajustarTotalReceivable(servico, operacaoId, delta, chave),
     registrarRecebimento: (operacaoId: string, delta: number) =>
       registrarRecebimento(servico, operacaoId, delta),
     marcarTaxaRecebida: async (id: string, taxa: number, chave: string) => {
@@ -233,6 +254,11 @@ Deno.serve(async (req) => {
 
   if (acao === 'recuperar_resolucao') {
     const resultado = await recuperarResolucao({ cheque, io: ioResolucao });
+    return Response.json({ ok: true, acao, resultado });
+  }
+
+  if (acao === 'recuperar_taxa') {
+    const resultado = await recuperarTaxaDevolucao({ cheque, io: ioResolucao });
     return Response.json({ ok: true, acao, resultado });
   }
 
@@ -300,7 +326,8 @@ Deno.serve(async (req) => {
       data: dia,
       justificativa: body.justificativa ? String(body.justificativa) : '',
       excecao: body.excecao === true,
-      autorizadoPor: usuario.email,
+      // M2.1 — `usuario` não existe: a identidade vem do token resolvido acima.
+      autorizadoPor: user.email,
       io: ioResolucao,
     });
     return Response.json({ ok: true, acao, resultado });

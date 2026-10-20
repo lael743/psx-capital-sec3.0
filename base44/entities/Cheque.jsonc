@@ -167,7 +167,11 @@
     "taxa_aplicada": {
       "type": "boolean",
       "default": false,
-      "description": "M2 \u2014 true quando a taxa_devolucao j\u00e1 foi incorporada a Operation.total_receivable por esta resolu\u00e7\u00e3o. \u00c9 gravado na MESMA escrita do compare-and-swap da resolu\u00e7\u00e3o: a reivindica\u00e7\u00e3o existe para impedir soma dupla; uma reivindica\u00e7\u00e3o \u00f3rf\u00e3 (processo morto antes do incremento) deixa a taxa SUB contabilizada \u2014 nunca duplicada \u2014 e \u00e9 diagnosticada por inspecionarResolucao."
+      "description": "M2.1 \u2014 ESPELHO da incorpora\u00e7\u00e3o, n\u00e3o prova. S\u00f3 passa a true DEPOIS que a chave do evento consta em Operation.taxa_incorporada_eventos (incremento comprovado). Uma flag isolada em true, sem a chave na opera\u00e7\u00e3o, \u00e9 estado amb\u00edguo/legado: NUNCA \u00e9 lida como conclus\u00e3o financeira nem dispara novo incremento. Ver diagnosticarTaxa em base44/shared/chequeCore.ts."
+    },
+    "taxa_incorporada_evento": {
+      "type": "string",
+      "description": "M2.1 \u2014 chave do evento de INCORPORA\u00c7\u00c3O da taxa (`<resolucao_evento>:taxa`), gravada na MESMA escrita do compare-and-swap da resolu\u00e7\u00e3o. \u00c9 a INTEN\u00c7\u00c3O registrada e a chave de idempot\u00eancia do incremento em Operation.total_receivable: a mesma chave n\u00e3o entra duas vezes, e sua aus\u00eancia distingue registro legado (amb\u00edguo) de evento novo interrompido (recuper\u00e1vel)."
     },
     "taxa_base_valor": {
       "type": "number",
@@ -193,6 +197,10 @@
         "type": "string"
       },
       "description": "M2 \u2014 chaves dos eventos de recebimento da taxa (`cheque_taxa_devolucao:<id>`), gravadas na MESMA escrita do compare-and-swap que incrementa taxa_recebida, no padr\u00e3o de applied_ledger_keys. Impedem receber a mesma taxa duas vezes."
+    },
+    "taxa_bank_id": {
+      "type": "string",
+      "description": "M2.1 \u2014 conta em que a taxa SEPARADA deve ser creditada, gravada na MESMA escrita que reivindica o evento. Sem ela a recupera\u00e7\u00e3o n\u00e3o teria como conferir `applied_ledger_keys` e distinguir cr\u00e9dito aplicado de cr\u00e9dito que nunca aconteceu."
     },
     "resolucao_bank_id": {
       "type": "string",
@@ -236,5 +244,63 @@
     "check_number",
     "value",
     "compensation_date"
-  ]
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    }
+  }
 }

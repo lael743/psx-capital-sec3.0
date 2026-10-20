@@ -172,6 +172,13 @@
       "default": 0,
       "description": "Total de cheques compensados j\u00e1 refletido em amount_paid. Permite recalcular a parcela dos cheques por DIFEREN\u00c7A, sem sobrescrever pagamentos independentes (Asaas, baixa manual). Ver computeAmountPaid em src/lib/chequeCore.js."
     },
+    "taxa_incorporada_eventos": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "M2.1 \u2014 chaves dos eventos de TAXA DE DEVOLU\u00c7\u00c3O j\u00e1 somados a total_receivable. \u00c9 gravada na MESMA escrita at\u00f4mica do $inc, por compare-and-swap sobre este documento \u00fanico: \u00e9 a PROVA de que o incremento aconteceu e a guarda que impede somar a mesma taxa duas vezes, inclusive sob recupera\u00e7\u00e3o concorrente. A flag taxa_aplicada do cheque \u00e9 apenas espelho disto. Ver recuperarTaxaDevolucao em base44/shared/chequeEventFlow.js."
+    },
     "asaas_eventos_processados": {
       "type": "array",
       "items": {
@@ -395,5 +402,63 @@
     "rate",
     "start_date",
     "due_date"
-  ]
+  ],
+  "rls": {
+    "read": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "create": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "update": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    },
+    "delete": {
+      "$or": [
+        {
+          "user_condition": {
+            "role": "admin"
+          }
+        },
+        {
+          "user_condition": {
+            "role": "user"
+          }
+        }
+      ]
+    }
+  }
 }

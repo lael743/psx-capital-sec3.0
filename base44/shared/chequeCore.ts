@@ -504,3 +504,126 @@ export function valorRecebivelResolucao(cheque) {
   const taxa = round2(cheque && cheque.taxa_devolucao);
   return round2(principal + (cheque && cheque.taxa_incorporada === true ? taxa : 0));
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * M2.1 — DIAGNÓSTICO DA TAXA DE DEVOLUÇÃO (recuperação segura)
+ *
+ * O problema: `taxa_aplicada` era gravado no MESMO compare-and-swap que troca o
+ * status do cheque, mas o incremento em `Operation.total_receivable` acontece
+ * DEPOIS. Um processo que morresse entre os dois deixava a taxa SUB
+ * contabilizada — com uma flag dizendo que estava tudo certo.
+ *
+ * A regra aqui é simples e não negocia: FLAG NÃO É PROVA. A prova é a chave do
+ * evento gravada no documento que recebeu o efeito (`Operation.taxa_incorporada_eventos`
+ * para a incorporação, `Banco.applied_ledger_keys` para o crédito da taxa separada).
+ * Sem essa prova, o estado é PENDENTE (nada foi aplicado) ou AMBÍGUO (não dá para
+ * concluir) — e ambíguo nunca vira escrita.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Chave do evento de INCORPORAÇÃO da taxa à obrigação (derivada da resolução). */
+export function taxaIncorporadaEventKey(chaveResolucao) {
+  return `${chaveResolucao}:taxa`;
+}
+
+/** Estados possíveis da taxa de devolução. */
+export const ESTADOS_TAXA = Object.freeze({
+  SEM_TAXA: 'sem_taxa',
+  INCORPORADA_CONCLUIDA: 'incorporada_concluida',
+  INCORPORADA_PENDENTE: 'incorporada_pendente',
+  INCORPORADA_AMBIGUA: 'incorporada_ambigua',
+  SEPARADA_NAO_COBRADA: 'separada_nao_cobrada',
+  SEPARADA_NADA_APLICADO: 'separada_nada_aplicado',
+  SEPARADA_SALDO_SEM_LANCAMENTO: 'separada_saldo_sem_lancamento',
+  SEPARADA_LANCAMENTO_SEM_SALDO: 'separada_lancamento_sem_saldo',
+  SEPARADA_RECEBIDA_DEFASADA: 'separada_recebida_defasada',
+  SEPARADA_CONCLUIDA: 'separada_concluida',
+});
+
+/**
+ * Diagnóstico PURO da taxa de devolução.
+ *
+ * `evidencia` traz o que foi LIDO do banco de dados (nunca o que se presume):
+ *   · chaveNaOperacao     — a chave de incorporação consta em Operation.taxa_incorporada_eventos
+ *   · creditoNoBanco      — a chave do recebimento consta em Banco.applied_ledger_keys
+ *   · lancamentoExiste    — existe CashFlow com essa chave de origem
+ *
+ * `acao` só vem preenchida quando existe uma retomada COMPROVADAMENTE segura.
+ * Tudo o que não é provado fica como 'nenhuma' e vira divergência registrada.
+ */
+export function diagnosticarTaxa(cheque, evidencia = {}) {
+  const doc = cheque || {};
+  const taxa = round2(doc.taxa_devolucao);
+  const divergencias = [];
+
+  if (taxa <= 0) {
+    return { estado: ESTADOS_TAXA.SEM_TAXA, acao: 'nenhuma', taxa, divergencias };
+  }
+
+  const recebida = Number(doc.taxa_recebida) || 0;
+
+  if (doc.taxa_incorporada === true) {
+    const chave = doc.taxa_incorporada_evento || '';
+    if (!chave) {
+      // Resolução anterior à M2.1: a flag pode ou não refletir a realidade e não
+      // existe chave para conferir. Nunca reaplicar — só registrar.
+      divergencias.push('sem_chave_de_incorporacao');
+      if (doc.taxa_aplicada === true) divergencias.push('flag_sem_prova');
+      return { estado: ESTADOS_TAXA.INCORPORADA_AMBIGUA, acao: 'nenhuma', taxa, divergencias };
+    }
+    if (evidencia.chaveNaOperacao === true) {
+      return {
+        estado: ESTADOS_TAXA.INCORPORADA_CONCLUIDA,
+        acao: doc.taxa_aplicada === true ? 'nenhuma' : 'espelhar_flag',
+        taxa,
+        chave,
+        divergencias,
+      };
+    }
+    if (evidencia.chaveNaOperacao === false) {
+      return { estado: ESTADOS_TAXA.INCORPORADA_PENDENTE, acao: 'retomar_incremento', taxa, chave, divergencias };
+    }
+    // Operação não pôde ser lida: não é prova de ausência.
+    divergencias.push('operacao_nao_conferida');
+    return { estado: ESTADOS_TAXA.INCORPORADA_AMBIGUA, acao: 'nenhuma', taxa, chave, divergencias };
+  }
+
+  const reivindicada = (Array.isArray(doc.taxa_eventos) ? doc.taxa_eventos : []).includes(taxaDevolucaoEventKey(doc.id));
+  if (!reivindicada) {
+    return { estado: ESTADOS_TAXA.SEPARADA_NAO_COBRADA, acao: 'nenhuma', taxa, divergencias };
+  }
+
+  if (evidencia.creditoNoBanco === true && evidencia.lancamentoExiste === true) {
+    if (recebida + 0.01 >= taxa) {
+      return {
+        estado: ESTADOS_TAXA.SEPARADA_CONCLUIDA,
+        acao: doc.taxa_aplicada === true ? 'nenhuma' : 'espelhar_flag',
+        taxa,
+        divergencias,
+      };
+    }
+    return { estado: ESTADOS_TAXA.SEPARADA_RECEBIDA_DEFASADA, acao: 'espelhar_recebida', taxa, divergencias };
+  }
+
+  if (evidencia.creditoNoBanco === true && evidencia.lancamentoExiste === false) {
+    return { estado: ESTADOS_TAXA.SEPARADA_SALDO_SEM_LANCAMENTO, acao: 'recriar_lancamento', taxa, divergencias };
+  }
+
+  if (evidencia.creditoNoBanco === false && evidencia.lancamentoExiste === true) {
+    // O caixa diz que entrou, a conta não recebeu: presumir qualquer lado é
+    // inventar movimentação.
+    divergencias.push('lancamento_sem_credito');
+    return { estado: ESTADOS_TAXA.SEPARADA_LANCAMENTO_SEM_SALDO, acao: 'nenhuma', taxa, divergencias };
+  }
+
+  if (evidencia.creditoNoBanco === false && evidencia.lancamentoExiste === false) {
+    if (recebida > 0.01) {
+      // Diz que recebeu, mas não há crédito nem lançamento: estado contraditório.
+      divergencias.push('recebida_sem_efeito');
+      return { estado: ESTADOS_TAXA.SEPARADA_LANCAMENTO_SEM_SALDO, acao: 'nenhuma', taxa, divergencias };
+    }
+    return { estado: ESTADOS_TAXA.SEPARADA_NADA_APLICADO, acao: 'liberar_reivindicacao', taxa, divergencias };
+  }
+
+  divergencias.push('conta_nao_conferida');
+  return { estado: ESTADOS_TAXA.SEPARADA_LANCAMENTO_SEM_SALDO, acao: 'nenhuma', taxa, divergencias };
+}

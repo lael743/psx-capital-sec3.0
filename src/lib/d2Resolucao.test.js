@@ -106,9 +106,17 @@ function ambiente({ saldoBanco = 0, valor = 1000, total = 1000, pago = 0 } = {})
       const d = operacoes.achar(id);
       return d ? { ...d } : null;
     },
-    ajustarTotalReceivable: async (id, delta) => {
-      await operacoes.updateWhere({ id }, { $inc: { total_receivable: delta } });
-      await recalcular();
+    // M2.1 — espelha o CAS da função de servidor: o $inc e a chave do evento
+    // acontecem na MESMA escrita sobre a operação, e é isso que devolve
+    // `aplicado`. Sem isso o teste não provaria a garantia contra soma dupla.
+    ajustarTotalReceivable: async (id, delta, chave) => {
+      const res = await operacoes.updateWhere(
+        { id, taxa_incorporada_eventos: { $ne: chave } },
+        { $inc: { total_receivable: delta }, $push: { taxa_incorporada_eventos: chave } }
+      );
+      const aplicado = (Number(res && res.updated) || 0) > 0;
+      if (aplicado) await recalcular();
+      return { aplicado };
     },
     registrarRecebimento: async (id, delta) => {
       await operacoes.updateWhere({ id }, { $inc: { amount_paid: delta } });

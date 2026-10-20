@@ -62,6 +62,8 @@ export const ACOES_BANCARIAS = Object.freeze({
   DEVOLVER_CHEQUE_EXCECAO: 'devolver_cheque_excecao',
   // M2 — estorno do RECEBIMENTO de uma resolução: devolve dinheiro, é reversão.
   ESTORNAR_RESOLUCAO: 'estornar_resolucao_cheque',
+  // M2.1 — recuperação da taxa: pode somar valor à obrigação, é administrativa.
+  RECUPERAR_TAXA_CHEQUE: 'recuperar_taxa_cheque',
 });
 
 /** Chave de página usada pelo controle de acesso existente (pageAccess.js). */
@@ -109,6 +111,7 @@ const ADMINISTRATIVAS = Object.freeze([
   ACOES_BANCARIAS.RECUPERAR_CHEQUE,
   ACOES_BANCARIAS.DEVOLVER_CHEQUE_EXCECAO,
   ACOES_BANCARIAS.ESTORNAR_RESOLUCAO,
+  ACOES_BANCARIAS.RECUPERAR_TAXA_CHEQUE,
 ]);
 
 /**

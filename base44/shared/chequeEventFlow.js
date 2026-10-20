@@ -62,6 +62,9 @@ import {
   inicioJurosResolucao,
   chaveDevolucaoFisica,
   valorRecebivelResolucao,
+  taxaIncorporadaEventKey,
+  diagnosticarTaxa,
+  ESTADOS_TAXA,
 } from './chequeCore.ts';
 import { applyBankDelta, LEDGER_KEYS_FIELD } from './bankLedger.ts';
 
@@ -407,6 +410,8 @@ export async function resolverChequeDevolvido({
   const chave = cheque.resolucao_estorno_evento
     ? `${resolucaoEventKey(cheque.id)}#${makeEventToken()}`
     : resolucaoEventKey(cheque.id);
+  // M2.1 — a incorporação da taxa tem chave PRÓPRIA, derivada da resolução.
+  const chaveTaxaIncorporada = taxaIncorporadaEventKey(chave);
 
   const historico = `[RESOLVIDO em ${dia}] ${modalidade} | Taxa: ${percentual}% de ${moeda(base)} = ${moeda(taxa)} (${incorporada ? 'incorporada' : 'separada'})`
     + (juros > 0 ? ` | Juros: ${moeda(juros)} | Nova data: ${vencimentoNovo}` : '')
@@ -422,7 +427,10 @@ export async function resolverChequeDevolvido({
     taxa_percentual: percentual,
     taxa_devolucao: taxa,
     taxa_incorporada: incorporada,
-    taxa_aplicada: incorporada,
+    taxa_incorporada_evento: incorporada ? chaveTaxaIncorporada : '',
+    // M2.1 — espelho, NÃO prova: só vira true depois que a chave entra na
+    // operação (passo 2). Uma flag isolada nunca autoriza repetir incremento.
+    taxa_aplicada: false,
     taxa_recebida: Number(cheque.taxa_recebida) || 0,
   };
   if (modalidade === 'prorrogacao') {
@@ -442,9 +450,19 @@ export async function resolverChequeDevolvido({
     return { status: 'nao_aplicado', motivo: MOTIVOS.ESTADO_JA_ALTERADO, claim };
   }
 
-  // ── 2. Taxa incorporada: entra na obrigação UMA vez. O CAS acima é a guarda.
+  // ── 2. Taxa incorporada: entra na obrigação UMA vez.
+  // O CAS do passo 1 registra a INTENÇÃO; a prova é a chave gravada no próprio
+  // documento da operação, na MESMA escrita do $inc. Um processo morto entre os
+  // dois deixa estado PENDENTE (recuperável por recuperarTaxaDevolucao) — nunca
+  // uma segunda soma, porque o $inc é guardado pela chave.
   if (incorporada) {
-    await io.ajustarTotalReceivable(cheque.operation_id, taxa);
+    const incremento = await io.ajustarTotalReceivable(cheque.operation_id, taxa, chaveTaxaIncorporada);
+    if (incremento && incremento.aplicado === true) {
+      await chequeStore.updateWhere(
+        { id: cheque.id, taxa_incorporada_evento: chaveTaxaIncorporada },
+        { $set: { taxa_aplicada: true } }
+      );
+    }
   }
 
   let recebido = 0;
@@ -526,9 +544,11 @@ export async function receberTaxaDevolucao({ cheque, bankId, bankName, data, met
   if (!bankId) return { status: 'nao_aplicado', motivo: MOTIVOS.SEM_CONTA };
 
   const chave = taxaDevolucaoEventKey(current.id);
+  // A conta é gravada NA MESMA escrita da reivindicação: sem ela, uma execução
+  // interrompida não teria onde conferir `applied_ledger_keys`.
   const claim = await chequeStore.updateWhere(
     { id: current.id, taxa_eventos: { $ne: chave } },
-    { $push: { taxa_eventos: chave } }
+    { $push: { taxa_eventos: chave }, $set: { taxa_bank_id: bankId } }
   );
   if ((Number(claim && claim.updated) || 0) === 0) {
     return { status: 'nao_aplicado', motivo: MOTIVOS.ESTADO_JA_ALTERADO };
@@ -741,6 +761,7 @@ export async function inspecionarResolucao({ cheque, io }) {
     substituto_id: (substitutos || [])[0]?.id || '',
     taxa_pendente: taxaDevolucaoPendente(current),
     devolucao_fisica: current.devolucao_fisica_evento || '',
+    taxa: await inspecionarTaxa({ cheque: current, io }),
   };
 }
 
@@ -779,4 +800,150 @@ export async function recuperarResolucao({ cheque, io }) {
   }
 
   return { status: 'requer_intervencao', estado_anterior: diag.estado, diagnostico: diag };
+}
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * M2.1 — RECUPERAÇÃO DA TAXA DE DEVOLUÇÃO
+ *
+ * `taxa_aplicada` era gravado antes dos efeitos. Aqui a pergunta deixa de ser
+ * "a flag está ligada?" e passa a ser "QUAL efeito existe no documento que
+ * deveria tê-lo recebido?" — a única evidência que não mente.
+ *
+ * Estados e retomadas permitidas:
+ *   · incorporada_concluida ......... chave em Operation.taxa_incorporada_eventos
+ *                                     → só espelha a flag; nenhum valor se move
+ *   · incorporada_pendente .......... intenção registrada, chave AUSENTE na operação
+ *                                     → retoma o $inc pela mesma chave (no máximo 1x)
+ *   · incorporada_ambigua ........... sem chave (legado) ou operação ilegível
+ *                                     → NUNCA reaplica; divergência registrada
+ *   · separada_nada_aplicado ........ reivindicada, sem crédito e sem lançamento
+ *                                     → libera a reivindicação (o operador pode repetir)
+ *   · separada_saldo_sem_lancamento . crédito comprovado, lançamento ausente
+ *                                     → recria SÓ o lançamento; não credita de novo
+ *   · separada_lancamento_sem_saldo . lançamento sem crédito (ou conta ilegível)
+ *                                     → intervenção; presumir seria inventar
+ *   · separada_recebida_defasada .... efeitos completos, taxa_recebida atrás
+ *                                     → corrige o espelho
+ *
+ * Nenhum caminho cria lançamento compensatório nem "ajusta" saldo para bater.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/** Diagnóstico da taxa de devolução (somente leitura). */
+export async function inspecionarTaxa({ cheque, io }) {
+  const { chequeStore, bancoStore } = exigirIo(io);
+  exigirIoResolucao(io || {});
+
+  const current = await chequeStore.read(cheque.id || cheque);
+  if (!current) return { status: 'nao_encontrado' };
+
+  const evidencia = {};
+
+  if (current.taxa_incorporada === true) {
+    const chave = current.taxa_incorporada_evento || '';
+    if (chave && current.operation_id) {
+      const op = await io.getOperacao(current.operation_id);
+      if (op) {
+        const chaves = Array.isArray(op.taxa_incorporada_eventos) ? op.taxa_incorporada_eventos : [];
+        evidencia.chaveNaOperacao = chaves.includes(chave);
+      }
+    }
+  } else {
+    const chave = taxaDevolucaoEventKey(current.id);
+    const contaId = current.taxa_bank_id || current.resolucao_bank_id || current.deposited_bank_id || '';
+    evidencia.conta_id = contaId;
+    if (contaId) {
+      const banco = await bancoStore.get(contaId);
+      if (banco) {
+        evidencia.creditoNoBanco = (banco[LEDGER_KEYS_FIELD] || []).includes(chave);
+      }
+    }
+    const lancamentos = (await io.lerLancamentos({ source_id: chave })) || [];
+    evidencia.lancamentoExiste = lancamentos.length > 0;
+  }
+
+  const diag = diagnosticarTaxa(current, evidencia);
+  return {
+    status: current.status,
+    ...diag,
+    valor: round2(current.taxa_devolucao),
+    recebido: Number(current.taxa_recebida) || 0,
+    chave_incorporada: current.taxa_incorporada_evento || '',
+    evidencia,
+  };
+}
+
+/**
+ * Retoma SOMENTE etapas comprovadamente pendentes da taxa de devolução.
+ * Nunca credita conta, nunca repete lançamento, nunca reescreve valor por
+ * estimativa. O que não é provado volta como `requer_intervencao`.
+ */
+export async function recuperarTaxaDevolucao({ cheque, io }) {
+  const { chequeStore, criarLancamento } = exigirIo(io);
+  exigirIoResolucao(io || {});
+
+  const diag = await inspecionarTaxa({ cheque, io });
+  if (diag.status === 'nao_encontrado') return { status: 'nao_encontrado' };
+
+  const current = await chequeStore.read(cheque.id || cheque);
+  const base = { estado_anterior: diag.estado, divergencias: diag.divergencias || [], diagnostico: diag };
+
+  if (diag.acao === 'retomar_incremento') {
+    const r = await io.ajustarTotalReceivable(current.operation_id, diag.valor, diag.chave_incorporada);
+    const aplicado = Boolean(r && r.aplicado === true);
+    if (aplicado) {
+      await chequeStore.updateWhere(
+        { id: current.id, taxa_incorporada_evento: diag.chave_incorporada },
+        { $set: { taxa_aplicada: true } }
+      );
+    }
+    return { status: aplicado ? 'taxa_incorporada' : 'ja_aplicada', ...base };
+  }
+
+  if (diag.acao === 'espelhar_flag') {
+    const res = await chequeStore.updateWhere(
+      { id: current.id, taxa_aplicada: { $ne: true } },
+      { $set: { taxa_aplicada: true } }
+    );
+    const ok = (Number(res && res.updated) || 0) > 0;
+    return { status: ok ? 'espelho_corrigido' : 'ja_espelhado', ...base };
+  }
+
+  if (diag.acao === 'liberar_reivindicacao') {
+    const chave = taxaDevolucaoEventKey(current.id);
+    const res = await chequeStore.updateWhere(
+      { id: current.id, taxa_eventos: chave },
+      { $pull: { taxa_eventos: chave } }
+    );
+    const ok = (Number(res && res.updated) || 0) > 0;
+    return { status: ok ? 'reivindicacao_liberada' : 'ja_liberada', ...base };
+  }
+
+  if (diag.acao === 'recriar_lancamento') {
+    const res = await criarLancamento({
+      source_type: 'taxa_devolucao_cheque',
+      source_id: taxaDevolucaoEventKey(current.id),
+      category: 'taxa_devolucao_cheque',
+      amount: diag.valor,
+      date: current.resolvido_em || current.compensation_date,
+      description: `Taxa de devolução — cheque #${current.check_number} (${current.client_name}) (lançamento recuperado)`,
+      type: 'entrada',
+      method: 'outro',
+      bank_id: diag.evidencia.conta_id,
+      operation_id: current.operation_id,
+    });
+    return { status: res.status === 'created' ? 'lancamento_reparado' : 'ja_existia', ...base };
+  }
+
+  if (diag.acao === 'espelhar_recebida') {
+    const res = await chequeStore.updateWhere(
+      { id: current.id, taxa_recebida: Number(current.taxa_recebida) || 0 },
+      { $set: { taxa_recebida: diag.valor, taxa_aplicada: true } }
+    );
+    const ok = (Number(res && res.updated) || 0) > 0;
+    return { status: ok ? 'recebida_corrigida' : 'recebida_ja_corrigida', ...base };
+  }
+
+  const concluida = diag.estado === ESTADOS_TAXA.INCORPORADA_CONCLUIDA
+    || diag.estado === ESTADOS_TAXA.SEPARADA_CONCLUIDA;
+  return { status: concluida ? 'sem_acao' : 'requer_intervencao', ...base };
 }

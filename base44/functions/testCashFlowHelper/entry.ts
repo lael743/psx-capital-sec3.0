@@ -15,6 +15,22 @@ import { createOperationalCashFlow } from '../../shared/cashFlowHelper.ts';
  */
 Deno.serve(async (req) => {
   const base44 = createClientFromRequest(req);
+
+  // M2.1 — ESTA É UMA FUNÇÃO AUXILIAR DE TESTE, não um endpoint público.
+  // Antes ela não checava identidade: qualquer pessoa na internet podia
+  // chamá-la e criar/apagar registros com privilégio de serviço. O acesso é
+  // decidido AQUI, pelo token da plataforma — nunca pelo corpo.
+  const usuario = await base44.auth.me().catch(() => null);
+  if (!usuario) {
+    return Response.json({ success: false, erro: 'Não autenticado.' }, { status: 401 });
+  }
+  if (usuario.role !== 'admin') {
+    return Response.json(
+      { success: false, erro: 'Verificação interna restrita a administradores.' },
+      { status: 403 }
+    );
+  }
+
   const results = [];
   const cleanupCashFlowIds = [];
   let testOpId = null;
