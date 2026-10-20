@@ -1,11 +1,8 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { asaasRequest, mapAsaasStatus } from '../../shared/asaas.ts';
 import { secrets } from 'base44:runtime';
-import {
-  asaasEventKey,
-  applyAsaasReceiptUnchecked,
-  sumCompensatedCheques,
-} from '../../shared/operationAccounting.js';
+import { sumCompensatedCheques } from '../../shared/operationAccounting.js';
+import { processReceipt } from '../../shared/asaasReceiptFlow.js';
 
 // Sincroniza o status dos títulos (Cheque) vinculados à operação conforme o estado da operação.
 // - 'compensado' quando a operação é quitada/finalizada (paga)
@@ -32,21 +29,6 @@ async function syncTitulosByOperacaoStatus(base44, operationId, targetStatus) {
   await base44.asServiceRole.entities.Operation.update(operationId, {
     cheques_compensados_total: sumCompensatedCheques(after),
   });
-}
-
-/**
- * Reivindica a identidade de um RECEBIMENTO Asaas por compare-and-swap.
- * Só quem consegue gravar a chave (updated === 1) contabiliza o valor; uma
- * reentrega do mesmo webhook encontra a chave e não altera nada.
- */
-async function claimAsaasEvent(base44, operationId, paymentId) {
-  const key = asaasEventKey(paymentId);
-  if (!key || !operationId) return false;
-  const res = await base44.asServiceRole.entities.Operation.updateMany(
-    { id: operationId, asaas_eventos_processados: { $ne: key } },
-    { $push: { asaas_eventos_processados: key } }
-  );
-  return !!res && res.updated === 1;
 }
 
 Deno.serve(async (req) => {
@@ -112,30 +94,16 @@ Deno.serve(async (req) => {
       if (payment.subscriptionStatus) updateData.asaas_status = payment.subscriptionStatus;
       if (payment.nextDueDate) updateData.proxima_cobranca = payment.nextDueDate;
 
-      // D1.1 — idempotência: o evento é reivindicado UMA vez. Reentrega do mesmo
-      // pagamento não volta a amortizar a operação nem a incrementar os ciclos.
-      const claimed = isReceived && !isDeleted && operation
-        ? await claimAsaasEvent(base44, operation.id, paymentId)
-        : false;
-
-      if (isReceived && !isDeleted && claimed) {
+      if (isReceived && !isDeleted) {
+        // Estimativa PRÉ-incremento, usada apenas na descrição do extrato.
+        // O contador em si é incrementado com $inc logo abaixo (atômico).
         const newCiclosPagos = (vinculo.ciclos_pagos || 0) + 1;
-        updateData.ciclos_pagos = newCiclosPagos;
+        const numOp = operation?.numero_operacao
+          ? String(operation.numero_operacao).padStart(6, '0')
+          : '';
 
-        // Amortiza a operação
-        if (operation) {
-          const fresh = await base44.asServiceRole.entities.Operation.get(operation.id);
-          const next = applyAsaasReceiptUnchecked(fresh, receivedValue);
-          const opUpdate = { amount_paid: next.amount_paid, balance_due: next.balance_due };
-          if (next.status) opUpdate.status = next.status;
-          await base44.asServiceRole.entities.Operation.update(operation.id, opUpdate);
-
-          // Crédito na conta corrente do cedente
-          if (operation.client_id) {
-            const numOp = operation.numero_operacao
-              ? String(operation.numero_operacao).padStart(6, '0')
-              : '';
-            await base44.asServiceRole.entities.LancamentoContaCorrente.create({
+        const lancamentoPayload = operation?.client_id
+          ? {
               client_id: operation.client_id,
               client_name: operation.client_name,
               type: 'parcela',
@@ -147,26 +115,45 @@ Deno.serve(async (req) => {
               status: 'compensado',
               operation_id: operation.id,
               payment_method: payment.billingType === 'BOLETO' ? 'boleto' : 'pix',
-            });
-          }
-        }
+            }
+          : null;
 
-        // Prazo definido: ao atingir o nº de ciclos, encerra a assinatura
-        if (
-          vinculo.prazo_tipo === 'definido' &&
-          vinculo.num_ciclos > 0 &&
-          newCiclosPagos >= vinculo.num_ciclos &&
-          vinculo.asaas_subscription_id
-        ) {
-          try {
-            await asaasRequest(`/subscriptions/${vinculo.asaas_subscription_id}`, { method: 'DELETE' }, apiKey);
-            updateData.status = 'encerrada';
-            updateData.asaas_status = 'DELETED';
-          } catch (e) {
-            const msg = String(e.message || '');
-            if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
+        // D1.2 — reivindicação da identidade + amortização em UMA escrita atômica.
+        const res = await processReceipt(base44, {
+          paymentId,
+          operationId: operation ? operation.id : null,
+          parcelaId: null,
+          externalReference: externalRef,
+          value: receivedValue,
+          lancamentoPayload,
+        });
+
+        if (res.applied) {
+          // $inc em vez de ler-modificar-escrever: sem perda de atualização.
+          await base44.asServiceRole.entities.AssinaturaVinculo.updateMany(
+            { id: vinculo.id },
+            { $inc: { ciclos_pagos: 1 } }
+          );
+          const vinculoAtual = await base44.asServiceRole.entities.AssinaturaVinculo.get(vinculo.id);
+          updateData.ciclos_pagos = (vinculoAtual && vinculoAtual.ciclos_pagos) || newCiclosPagos;
+
+          // Prazo definido: ao atingir o nº de ciclos, encerra a assinatura
+          if (
+            vinculo.prazo_tipo === 'definido' &&
+            vinculo.num_ciclos > 0 &&
+            updateData.ciclos_pagos >= vinculo.num_ciclos &&
+            vinculo.asaas_subscription_id
+          ) {
+            try {
+              await asaasRequest(`/subscriptions/${vinculo.asaas_subscription_id}`, { method: 'DELETE' }, apiKey);
               updateData.status = 'encerrada';
               updateData.asaas_status = 'DELETED';
+            } catch (e) {
+              const msg = String(e.message || '');
+              if (msg.includes('404') || msg.toLowerCase().includes('not found')) {
+                updateData.status = 'encerrada';
+                updateData.asaas_status = 'DELETED';
+              }
             }
           }
         }
@@ -199,47 +186,56 @@ Deno.serve(async (req) => {
             inst.asaas_payment_status = status;
           }
 
-          // D1.1 — idempotência por evento (ver claimAsaasEvent).
-          const claimed = isReceived && !isDeleted
-            ? await claimAsaasEvent(base44, operationId, paymentId)
-            : false;
-
-          if (isReceived && !isDeleted && claimed) {
+          if (isReceived && !isDeleted) {
+            // Estado da parcela é atribuição idempotente — pode ser reaplicado
+            // sem risco, por isso não depende da reivindicação do evento.
             inst.paid = true;
             inst.paid_date = today;
             inst.status = 'paga';
-            const fresh = await base44.asServiceRole.entities.Operation.get(operationId);
-            const next = applyAsaasReceiptUnchecked(fresh, receivedValue);
-            updateData.amount_paid = next.amount_paid;
-            updateData.balance_due = next.balance_due;
-            if (next.status) updateData.status = next.status;
 
-            if (operation.client_id) {
-              const numOp = operation.numero_operacao
-                ? String(operation.numero_operacao).padStart(6, '0')
-                : '';
-              await base44.asServiceRole.entities.LancamentoContaCorrente.create({
-                client_id: operation.client_id,
-                client_name: operation.client_name,
-                type: payment.billingType === 'BOLETO' ? 'boleto' : 'pagamento_pix',
-                nature: 'credito',
-                date: today,
-                description: `Recebimento Asaas — Operação ${numOp} — Parcela ${inst.number} — ${payment.billingType || ''}`,
-                gross_value: receivedValue,
-                credit_amount: receivedValue,
-                status: 'compensado',
-                operation_id: operationId,
-                payment_method: payment.billingType === 'BOLETO' ? 'boleto' : 'pix',
-              });
+            const numOp = operation.numero_operacao
+              ? String(operation.numero_operacao).padStart(6, '0')
+              : '';
+
+            const lancamentoPayload = operation.client_id
+              ? {
+                  client_id: operation.client_id,
+                  client_name: operation.client_name,
+                  type: payment.billingType === 'BOLETO' ? 'boleto' : 'pagamento_pix',
+                  nature: 'credito',
+                  date: today,
+                  description: `Recebimento Asaas — Operação ${numOp} — Parcela ${inst.number} — ${payment.billingType || ''}`,
+                  gross_value: receivedValue,
+                  credit_amount: receivedValue,
+                  status: 'compensado',
+                  operation_id: operationId,
+                  payment_method: payment.billingType === 'BOLETO' ? 'boleto' : 'pix',
+                }
+              : null;
+
+            // D1.2 — amortização atômica + extrato idempotente.
+            const res = await processReceipt(base44, {
+              paymentId,
+              operationId,
+              parcelaId: null,
+              externalReference: externalRef,
+              value: receivedValue,
+              lancamentoPayload,
+            });
+
+            if (res.applied) {
+              const freshOp = await base44.asServiceRole.entities.Operation.get(operationId);
+              if (freshOp && freshOp.status === 'quitado') {
+                await syncTitulosByOperacaoStatus(base44, operationId, 'compensado');
+              }
             }
           } else if (status === 'overdue') {
             inst.status = 'atrasada';
           }
 
+          // amount_paid/balance_due/status são gravados atomicamente pelo
+          // processReceipt — aqui só o cronograma de parcelas.
           await base44.asServiceRole.entities.Operation.update(operationId, updateData);
-          if (updateData.status === 'quitado') {
-            await syncTitulosByOperacaoStatus(base44, operationId, 'compensado');
-          }
         }
       }
     } else if (parcelaId) {
@@ -255,68 +251,83 @@ Deno.serve(async (req) => {
         }
         await base44.asServiceRole.entities.ParcelaCliente.update(parcelaId, updateData);
 
-        // Launch credit on conta corrente if received
-        if (isReceived && parcela.operation_id) {
-          const operation = await base44.asServiceRole.entities.Operation.get(parcela.operation_id);
-          if (operation?.client_id) {
-            await base44.asServiceRole.entities.LancamentoContaCorrente.create({
-              client_id: operation.client_id,
-              client_name: operation.client_name,
-              type: payment.billingType === 'BOLETO' ? 'boleto' : 'pagamento_pix',
-              nature: 'credito',
-              date: today,
-              description: `Recebimento Asaas — Parcela ${parcela.number} — ${payment.billingType || ''}`,
-              gross_value: receivedValue,
-              credit_amount: receivedValue,
-              status: 'compensado',
-              operation_id: operation.id,
-              parcela_id: parcelaId,
-              payment_method: payment.billingType === 'BOLETO' ? 'boleto' : 'pix',
-            });
-          }
+        if (isReceived) {
+          const operation = parcela.operation_id
+            ? await base44.asServiceRole.entities.Operation.get(parcela.operation_id)
+            : null;
+
+          const lancamentoPayload = operation?.client_id
+            ? {
+                client_id: operation.client_id,
+                client_name: operation.client_name,
+                type: payment.billingType === 'BOLETO' ? 'boleto' : 'pagamento_pix',
+                nature: 'credito',
+                date: today,
+                description: `Recebimento Asaas — Parcela ${parcela.number} — ${payment.billingType || ''}`,
+                gross_value: receivedValue,
+                credit_amount: receivedValue,
+                status: 'compensado',
+                operation_id: operation.id,
+                parcela_id: parcelaId,
+                payment_method: payment.billingType === 'BOLETO' ? 'boleto' : 'pix',
+              }
+            : null;
+
+          // D1.2 — o extrato do CLIENTE é separado do caixa da EMPRESA.
+          // Este caminho NÃO amortiza a Operation (operationId = null), como
+          // antes. O lançamento é criado no máximo uma vez por evento.
+          await processReceipt(base44, {
+            paymentId,
+            operationId: null,
+            parcelaId,
+            externalReference: externalRef,
+            value: receivedValue,
+            lancamentoPayload,
+          });
         }
       }
     } else if (operationId) {
       const operation = await base44.asServiceRole.entities.Operation.get(operationId);
       if (operation) {
+        const numOp = operation.numero_operacao
+          ? String(operation.numero_operacao).padStart(6, '0')
+          : '';
+
+        const lancamentoPayload = operation.client_id
+          ? {
+              client_id: operation.client_id,
+              client_name: operation.client_name,
+              type: payment.billingType === 'BOLETO' ? 'boleto' : 'pagamento_pix',
+              nature: 'credito',
+              date: today,
+              description: `Recebimento Asaas — Operação ${numOp} — ${payment.billingType || ''}`,
+              gross_value: receivedValue,
+              credit_amount: receivedValue,
+              status: 'compensado',
+              operation_id: operationId,
+              payment_method: payment.billingType === 'BOLETO' ? 'boleto' : 'pix',
+            }
+          : null;
+
+        // D1.2 — amortização atômica + extrato idempotente, em uma só passagem.
+        const res = await processReceipt(base44, {
+          paymentId,
+          operationId,
+          parcelaId: null,
+          externalReference: externalRef,
+          value: receivedValue,
+          lancamentoPayload,
+        });
+
         const updateData = { asaas_payment_status: status };
-
-        // D1.1 — idempotência por evento (ver claimAsaasEvent).
-        const claimed = isReceived
-          ? await claimAsaasEvent(base44, operationId, paymentId)
-          : false;
-
-        if (isReceived && claimed) {
-          const next = applyAsaasReceiptUnchecked(operation, receivedValue);
-          updateData.amount_paid = next.amount_paid;
-          updateData.balance_due = next.balance_due;
-          updateData.status = next.status || operation.status;
-        } else if (status === 'overdue') {
-          updateData.status = 'atrasado';
-        }
+        if (!res.applied && status === 'overdue') updateData.status = 'atrasado';
         await base44.asServiceRole.entities.Operation.update(operationId, updateData);
-        if (updateData.status === 'quitado') {
-          await syncTitulosByOperacaoStatus(base44, operationId, 'compensado');
-        }
 
-        // Launch credit on conta corrente if received
-        if (isReceived && claimed && operation.client_id) {
-          const numOp = operation.numero_operacao
-            ? String(operation.numero_operacao).padStart(6, '0')
-            : '';
-          await base44.asServiceRole.entities.LancamentoContaCorrente.create({
-            client_id: operation.client_id,
-            client_name: operation.client_name,
-            type: payment.billingType === 'BOLETO' ? 'boleto' : 'pagamento_pix',
-            nature: 'credito',
-            date: today,
-            description: `Recebimento Asaas — Operação ${numOp} — ${payment.billingType || ''}`,
-            gross_value: receivedValue,
-            credit_amount: receivedValue,
-            status: 'compensado',
-            operation_id: operationId,
-            payment_method: payment.billingType === 'BOLETO' ? 'boleto' : 'pix',
-          });
+        if (res.applied) {
+          const freshOp = await base44.asServiceRole.entities.Operation.get(operationId);
+          if (freshOp && freshOp.status === 'quitado') {
+            await syncTitulosByOperacaoStatus(base44, operationId, 'compensado');
+          }
         }
       }
     }

@@ -136,6 +136,10 @@
     "document_url": {
       "type": "string"
     },
+    "asaas_event_key": {
+      "type": "string",
+      "description": "Identidade do evento de recebimento Asaas que originou este lan\u00e7amento (id do pagamento). Garante no m\u00e1ximo um lan\u00e7amento por evento no extrato do cliente \u2014 ver base44/shared/asaasReceiptFlow.js."
+    },
     "amortized_by_ids": {
       "type": "array",
       "items": {

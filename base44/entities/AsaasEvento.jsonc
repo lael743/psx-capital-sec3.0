@@ -1,0 +1,90 @@
+{
+  "name": "AsaasEvento",
+  "type": "object",
+  "properties": {
+    "event_key": {
+      "type": "string",
+      "description": "Identidade externa do evento (id do pagamento Asaas). Chave de idempot\u00eancia."
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "reivindicado",
+        "contabilizado",
+        "falha"
+      ],
+      "default": "reivindicado",
+      "description": "Estado do evento: reivindicado (recebido, efeitos nao confirmados), contabilizado (todos os efeitos confirmados), falha (erro recuperavel)."
+    },
+    "operation_id": {
+      "type": "string",
+      "description": "Operacao alvo do efeito monetario (vazio no caminho parcela, que nao amortiza a operacao)."
+    },
+    "parcela_id": {
+      "type": "string"
+    },
+    "payment_id": {
+      "type": "string",
+      "description": "ID da cobranca no Asaas (pay_xxx)"
+    },
+    "external_reference": {
+      "type": "string",
+      "description": "externalReference original enviada ao Asaas"
+    },
+    "value": {
+      "type": "number",
+      "description": "Valor do recebimento deste evento"
+    },
+    "claimed_at": {
+      "type": "string",
+      "description": "Instante ISO em que o evento foi reivindicado"
+    },
+    "accounted_at": {
+      "type": "string",
+      "description": "Instante ISO em que todos os efeitos foram confirmados"
+    },
+    "error": {
+      "type": "string",
+      "description": "Mensagem do ultimo erro de aplicacao"
+    },
+    "attempts": {
+      "type": "number",
+      "default": 0,
+      "description": "Numero de tentativas de recuperacao"
+    },
+    "effects": {
+      "type": "object",
+      "description": "Efeitos confirmados no banco: amount_paid (bool) e lancamento_id."
+    },
+    "lancamento_payload": {
+      "type": "object",
+      "description": "Payload do lancamento de extrato do cliente. Permite recriar o efeito faltante na recuperacao."
+    }
+  },
+  "required": [
+    "event_key",
+    "status"
+  ],
+  "rls": {
+    "read": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "create": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "update": {
+      "user_condition": {
+        "role": "admin"
+      }
+    },
+    "delete": {
+      "user_condition": {
+        "role": "admin"
+      }
+    }
+  }
+}
