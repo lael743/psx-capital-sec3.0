@@ -19,9 +19,9 @@
  *  2. Os lançamentos são idempotentes pela origem
  *     (`source_type = transferencia_bancaria`, `source_id = <id>:<perna>`),
  *     reivindicados por compare-and-swap NO DOCUMENTO DO BANCO — que tem `id`
- *     único — com prazo de validade. (Até a D3 a reivindicação vivia no diário;
- *     com dois diários criados em paralelo cada execução vencia no seu próprio
- *     documento e o lançamento duplicava.)
+ *     único. (Até a D3 a reivindicação vivia no diário; com dois diários
+ *     criados em paralelo cada execução vencia no seu próprio documento e o
+ *     lançamento duplicava.)
  *
  *  3. O que sobra de janela vira ESTADO OBSERVÁVEL: o diário registra por perna
  *     se o saldo foi aplicado e se o lançamento existe. `diagnosticar` expõe a
@@ -126,7 +126,6 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
       store: bancoStore,
       bankId: perna.bankId,
       claimKey: perna.sourceId,
-      now: relogio(),
     });
   }
 

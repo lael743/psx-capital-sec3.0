@@ -9,6 +9,8 @@ import assert from 'node:assert/strict';
 
 import {
   applyBankDelta,
+  claimBankEvent,
+  liberarReivindicacao,
   chavePerna,
   chaveEvento,
   LEDGER_KEYS_FIELD,
@@ -241,6 +243,31 @@ test('D3.1.7 — recuperação completa mesmo com documento duplicado presente',
   assert.equal(res.status, 'aplicada');
   assert.equal(bancos.achar('b1').current_balance, 700, 'não re-debitou');
   assert.equal(bancos.achar('b2').current_balance, 300);
+  assert.equal(cashflows.docs.length, 2);
+});
+
+// ═════════ 9. reivindicação órfã: bloqueia até liberação explícita ═════════
+test('D3.1.9 — reivindicação órfã segura o lançamento e a liberação o reconstrói sem tocar no saldo', async () => {
+  const { bancos, cashflows, bancoStore, motor } = cenario();
+  bancos.docs.push(bancoDe('b1', 1000), bancoDe('b2', 0));
+
+  // Processo morreu depois de reivindicar o lançamento da saída.
+  await claimBankEvent({ store: bancoStore, bankId: 'b1', claimKey: 'tr-orph:saida' });
+
+  await executar(motor, bancos, 'tr-orph');
+
+  // O saldo está correto dos dois lados; o lançamento da saída não existe.
+  assert.equal(bancos.achar('b1').current_balance, 700);
+  assert.equal(bancos.achar('b2').current_balance, 300);
+  assert.equal(cashflows.docs.filter((c) => c.transfer_leg === 'saida').length, 0);
+  assert.equal(cashflows.docs.filter((c) => c.transfer_leg === 'entrada').length, 1);
+
+  // A reivindicação sem carimbo de tempo NÃO expira: só sai por liberação explícita.
+  await liberarReivindicacao({ store: bancoStore, bankId: 'b1', claimKey: 'tr-orph:saida' });
+  await motor.recuperarTransferencia({ transferId: 'tr-orph' });
+
+  assert.equal(cashflows.docs.filter((c) => c.transfer_leg === 'saida').length, 1, 'lançamento reconstruído');
+  assert.equal(bancos.achar('b1').current_balance, 700, 'saldo NÃO foi tocado na recuperação');
   assert.equal(cashflows.docs.length, 2);
 });
 

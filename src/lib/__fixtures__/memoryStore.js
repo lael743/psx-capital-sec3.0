@@ -52,6 +52,12 @@ export function aplicar(doc, update) {
       setPath(doc, p, Array.isArray(at) ? [...at, v] : [v]);
     }
   }
+  if (update.$pull) {
+    for (const [p, v] of Object.entries(update.$pull)) {
+      const at = getPath(doc, p);
+      if (Array.isArray(at)) setPath(doc, p, at.filter((x) => x !== v));
+    }
+  }
 }
 
 export function criarColecao(nome) {

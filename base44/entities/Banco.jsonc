@@ -48,13 +48,16 @@
       "description": "Chaves de evento financeiro j\u00e1 aplicadas a current_balance. S\u00e3o gravadas na MESMA escrita at\u00f4mica do $inc, por compare-and-swap: \u00e9 o que impede cr\u00e9dito/d\u00e9bito duplo e perda de atualiza\u00e7\u00e3o concorrente. NUNCA remover chaves de eventos ainda reprocess\u00e1veis. Ver src/lib/bankLedger.js."
     },
     "ledger_claims": {
-      "type": "object",
-      "description": "Reivindica\u00e7\u00f5es de efeito secund\u00e1rio por evento (mapa chave \u2192 instante ISO), com prazo de validade. \u00c9 o CAS que decide quem cria o lan\u00e7amento em CashFlow daquele evento: como o Banco tem id \u00fanico e o di\u00e1rio de transfer\u00eancia n\u00e3o, \u00e9 aqui que a exclusividade realmente existe quando a cria\u00e7\u00e3o concorrente gerou dois di\u00e1rios. Ver claimBankEvent em src/lib/bankLedger.js."
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Chaves de evento cujo efeito secund\u00e1rio (lan\u00e7amento em CashFlow) j\u00e1 foi REIVINDICADO por uma execu\u00e7\u00e3o. \u00c9 o CAS que decide quem cria o lan\u00e7amento: como o Banco tem id \u00fanico e o di\u00e1rio de transfer\u00eancia n\u00e3o, \u00e9 aqui que a exclusividade realmente existe quando a cria\u00e7\u00e3o concorrente gerou dois di\u00e1rios. Lista (e n\u00e3o mapa) porque a plataforma rejeita caminho pontilhado em campo ausente do documento. N\u00c3O expira sozinha: uma reivindica\u00e7\u00e3o \u00f3rf\u00e3 exige liberarReivindicacao expl\u00edcito. Ver src/lib/bankLedger.js."
     },
     "current_balance": {
       "type": "number",
       "default": 0,
-      "description": "Saldo atual OFICIAL. Fonte de verdade da produ\u00e7\u00e3o \u2014 o c\u00e1lculo derivado da D2 permanece em modo sombra e n\u00e3o o substitui. ESCRITAS OPERACIONAIS devem usar applyBankDelta (incremento at\u00f4mico com chave de evento). A edi\u00e7\u00e3o manual em BancoFormModal continua sendo SOBRESCRITA INTENCIONAL, sem chave de evento: quem editar o saldo \u00e0 m\u00e3o enquanto um evento operacional estiver em curso pode perder o incremento (ou duplic\u00e1-lo a olho). Esse risco \u00e9 aceito e documentado; n\u00e3o foi convertido em incremento autom\u00e1tico para preservar a inten\u00e7\u00e3o do formul\u00e1rio."
+      "description": "Saldo atual OFICIAL. Fonte de verdade da produ\u00e7\u00e3o \u2014 o c\u00e1lculo derivado da D2 permanece em modo sombra e n\u00e3o o substitui. ESCRITAS OPERACIONAIS devem usar applyBankDelta (incremento at\u00f4mico com chave de evento). A edi\u00e7\u00e3o manual em BancoFormModal continua sendo SOBRESCRITA INTENCIONAL, sem chave de evento: quem editar o saldo \u00e0 m\u00e3o enquanto um evento operacional estiver em curso pode perder o incremento. Esse risco \u00e9 aceito e documentado; n\u00e3o foi convertido em incremento autom\u00e1tico para preservar a inten\u00e7\u00e3o do formul\u00e1rio."
     },
     "is_default_repasse": {
       "type": "boolean",
