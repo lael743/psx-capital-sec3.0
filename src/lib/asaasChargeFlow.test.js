@@ -379,37 +379,40 @@ test('D1.4.2 — timeout DEPOIS de o provedor criar: a retomada consulta e não 
 });
 
 test('D1.4.34 — mais de uma cobrança para a MESMA referência: adota uma só, nunca emite uma terceira', async () => {
-  const b = banco();
-  b.semear(operacao('op1', 1));
-  const p = provedorFake({ plano: ['timeout'] });
+  // Executa o mesmo cenário com a API devolvendo os duplicados em ordens
+  // OPOSTAS. Se a escolha dependesse da ordem, os dois resultados divergiriam.
+  const cenario = async (ordem) => {
+    const b = banco();
+    b.semear(operacao('op1', 1));
+    const p = provedorFake({ plano: ['timeout'] });
 
-  const r1 = await emitir(b, 'op1', 0, p);
-  assert.equal(r1.motivo, 'reconciliacao_pendente', 'resposta ambígua');
-  assert.equal(p.cobrancas.length, 1);
+    const r1 = await emitir(b, 'op1', 0, p);
+    assert.equal(r1.motivo, 'reconciliacao_pendente', 'resposta ambígua');
 
-  // Anomalia: aparece uma SEGUNDA cobrança para a mesma referência. A lista é
-  // entregue em ordem DECRESCENTE de id, para provar que a escolha não depende
-  // da ordem do provedor.
-  const base = p.cobrancas[0];
-  p.cobrancas.length = 0;
-  p.cobrancas.push({ ...base, id: 'pay_ZZZ' });
-  p.cobrancas.push({ ...base, id: 'pay_AAA' });
+    // Anomalia: uma SEGUNDA cobrança aparece para a mesma referência.
+    const base = p.cobrancas[0];
+    p.cobrancas.length = 0;
+    for (const id of ordem) p.cobrancas.push({ ...base, id });
 
-  const r2 = await emitir(b, 'op1', 0, p);
-  assert.equal(r2.ok, true, 'adota uma das existentes');
-  assert.equal(p.chamadas.criar, 1, 'NUNCA emite uma terceira cobrança');
+    const r2 = await emitir(b, 'op1', 0, p);
+    assert.equal(r2.ok, true, 'adota uma das existentes');
+    assert.equal(p.chamadas.criar, 1, 'NUNCA emite uma terceira cobrança');
+    assert.equal(r2.duplicadas, 2, 'a anomalia é IDENTIFICADA e devolvida');
 
-  const o = b.ler('op1');
-  assert.equal(
-    o.installment_schedule[0].asaas_payment_id,
-    'pay_AAA',
-    'escolha determinística pelo menor identificador'
-  );
+    // Repetir a conciliação continua adotando a MESMA cobrança.
+    const r3 = await emitir(b, 'op1', 0, p);
+    assert.equal(p.chamadas.criar, 1, 'nem na repetição emite terceira');
+    assert.equal(r3.ok, true);
 
-  // Repetir a conciliação continua adotando a MESMA cobrança.
-  await emitir(b, 'op1', 0, p);
-  assert.equal(p.chamadas.criar, 1);
-  assert.equal(b.ler('op1').installment_schedule[0].asaas_payment_id, 'pay_AAA');
+    return b.ler('op1').installment_schedule[0].asaas_payment_id;
+  };
+
+  const decrescente = await cenario(['pay_ZZZ', 'pay_AAA']);
+  const crescente = await cenario(['pay_AAA', 'pay_ZZZ']);
+
+  assert.equal(decrescente, 'pay_AAA', 'ordem decrescente: menor identificador');
+  assert.equal(crescente, 'pay_AAA', 'ordem crescente: MESMA escolha');
+  assert.equal(decrescente, crescente, 'a escolha NÃO depende da ordem da API');
 });
 
 test('D1.4.2b — consulta inconclusiva NÃO autoriza criar', async () => {

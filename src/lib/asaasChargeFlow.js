@@ -462,7 +462,17 @@ export async function emitirCobranca(base44, opts) {
   if (plan.reconciliarPrimeiro) {
     const rec = await reconciliarCobranca(base44, { ...ctx, key });
     if (rec.encontrado) {
-      return { slot, parcela: alvo.rotulo, ok: true, reconciliada: true, payment_id: rec.payment_id };
+      // `duplicadas > 1` é anomalia real: existem cobranças extras no provedor
+      // que não foram canceladas (cancelar exige autorização humana). Propagar
+      // o número mantém a situação VISÍVEL em vez de silenciosa.
+      return {
+        slot,
+        parcela: alvo.rotulo,
+        ok: true,
+        reconciliada: true,
+        payment_id: rec.payment_id,
+        duplicadas: rec.duplicadas,
+      };
     }
     if (rec.indeterminado) {
       // Nem a consulta foi conclusiva. A intenção VOLTA a
@@ -502,7 +512,14 @@ async function tratarAmbiguidade(base44, o) {
   await markChargeAmbiguous(base44, o.operationId, o.slot, o.erro, o.nowIso);
   const rec = await reconciliarCobranca(base44, o);
   if (rec.encontrado) {
-    return { slot: o.slot, parcela: o.alvo.rotulo, ok: true, reconciliada: true, payment_id: rec.payment_id };
+    return {
+      slot: o.slot,
+      parcela: o.alvo.rotulo,
+      ok: true,
+      reconciliada: true,
+      payment_id: rec.payment_id,
+      duplicadas: rec.duplicadas,
+    };
   }
   return { slot: o.slot, parcela: o.alvo.rotulo, ok: false, motivo: 'reconciliacao_pendente' };
 }
