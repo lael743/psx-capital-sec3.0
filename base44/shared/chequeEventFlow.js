@@ -943,7 +943,13 @@ export async function recuperarTaxaDevolucao({ cheque, io }) {
     return { status: ok ? 'recebida_corrigida' : 'recebida_ja_corrigida', ...base };
   }
 
-  const concluida = diag.estado === ESTADOS_TAXA.INCORPORADA_CONCLUIDA
-    || diag.estado === ESTADOS_TAXA.SEPARADA_CONCLUIDA;
-  return { status: concluida ? 'sem_acao' : 'requer_intervencao', ...base };
+  // Nada a fazer: evento concluído ou taxa que nunca foi cobrada. Os estados
+  // AMBÍGUOS não entram aqui — esses exigem gente.
+  const semEfeito = [
+    ESTADOS_TAXA.INCORPORADA_CONCLUIDA,
+    ESTADOS_TAXA.SEPARADA_CONCLUIDA,
+    ESTADOS_TAXA.SEPARADA_NAO_COBRADA,
+    ESTADOS_TAXA.SEM_TAXA,
+  ].includes(diag.estado);
+  return { status: semEfeito ? 'sem_acao' : 'requer_intervencao', ...base };
 }

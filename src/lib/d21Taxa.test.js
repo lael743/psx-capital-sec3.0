@@ -198,8 +198,10 @@ test('T1.2 — processo morto antes do incremento deixa PENDENTE, não concluíd
 
 test('T1.3 — a recuperação aplica a taxa UMA vez e é repetível sem efeito', async () => {
   const a = ambiente();
-  a.io.ajustarTotalReceivable = async () => ({ aplicado: false });
+  const incrementoReal = a.io.ajustarTotalReceivable;
+  a.io.ajustarTotalReceivable = async () => ({ aplicado: false }); // processo morre aqui
   await resolverChequeDevolvido({ cheque: a.cheque(), io: a.io, ...pagamento() });
+  a.io.ajustarTotalReceivable = incrementoReal; // recuperação usa o caminho real
 
   const rec = await recuperarTaxaDevolucao({ cheque: a.cheque(), io: a.io });
   assert.equal(rec.status, 'taxa_incorporada');

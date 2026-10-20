@@ -585,7 +585,9 @@ test('M2.13b — a função autoriza antes de elevar privilégio e não lê iden
     assert.equal(fonte.includes(proibido), false, `a função lê "${proibido}" do navegador`);
   }
   assert.match(fonte, /ACOES_BANCARIAS\.DEVOLVER_CHEQUE_EXCECAO/, 'a exceção precisa de política própria');
-  assert.match(fonte, /autorizadoPor: usuario\.email/, 'o dono da devolução física vem do token');
+  // M2.1 — `usuario` não existe nesta função: o dono vem de `user`, resolvido do token.
+  assert.match(fonte, /autorizadoPor: user\.email/, 'o dono da devolução física vem do token');
+  assert.equal(/autorizadoPor: usuario\.email/.test(fonte), false, 'restou identidade de variável inexistente');
 });
 
 /* ═════════════ 14. compatibilidade com cheques e operações antigos ════════ */
