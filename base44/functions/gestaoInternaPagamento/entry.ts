@@ -1,5 +1,6 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.52';
 import { createOperationalCashFlow } from '../../shared/cashFlowHelper.ts';
+import { applyBankDelta, chaveEvento } from '../../shared/bankLedger.ts';
 
 const CF_METHODS = ['pix', 'dinheiro', 'transferencia', 'cheque'];
 
@@ -139,12 +140,15 @@ async function registrar(client: any, user: any, body: any) {
   }
 
   if (bankId) {
-    const banco = await safeGet(client, 'Banco', bankId);
-    if (banco) {
-      await client.entities.Banco.update(bankId, {
-        current_balance: (Number(banco.current_balance) || 0) - valorNum,
-      });
-    }
+    // D3.1 — débito atômico com chave de evento: repetir a chamada do mesmo
+    // pagamento não debita duas vezes. O lançamento em CashFlow já é idempotente
+    // por origem (source_type + source_id), então o par fica 1:1.
+    await applyBankDelta({
+      store: { updateWhere: (q: any, u: any) => client.entities.Banco.updateMany(q, u) },
+      bankId,
+      delta: -valorNum,
+      eventKey: chaveEvento('pagamento_interno', pagamento.id),
+    });
   }
 
   await atualizarStatusLancamento(client, obrigacao.lancamento_id);
@@ -206,12 +210,14 @@ async function estornar(client: any, user: any, body: any) {
   const bankId = conta && conta.tipo === 'conta_bancaria' ? (conta.banco_id || '') : '';
 
   if (bankId) {
-    const banco = await safeGet(client, 'Banco', bankId);
-    if (banco) {
-      await client.entities.Banco.update(bankId, {
-        current_balance: (Number(banco.current_balance) || 0) + (Number(pagamento.valor_pago) || 0),
-      });
-    }
+    // D3.1 — estorno atômico: estornar duas vezes (ou em paralelo) devolve o
+    // valor no máximo uma vez. Chave distinta da do pagamento de propósito.
+    await applyBankDelta({
+      store: { updateWhere: (q: any, u: any) => client.entities.Banco.updateMany(q, u) },
+      bankId,
+      delta: Number(pagamento.valor_pago) || 0,
+      eventKey: chaveEvento('estorno_pagamento_interno', pagamento_id),
+    });
   }
 
   await createOperationalCashFlow(client, {

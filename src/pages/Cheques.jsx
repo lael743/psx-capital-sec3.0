@@ -3,6 +3,8 @@ import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { Save, Plus, Filter, RefreshCw, Download, X, CalendarClock, DollarSign, Package, CheckCircle2, Image, MoreVertical, AlertTriangle, Search, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { logAction } from '@/lib/audit';
+import { chaveEvento } from '@/lib/bankLedger';
+import { aplicarEventoBancario } from '@/lib/financeEvents';
 import { compensateCheque } from '@/lib/chequeOps';
 import { fetchAll } from '@/lib/fetchAll';
 import TesourariaTab from '@/components/cheque/TesourariaTab';
@@ -77,17 +79,26 @@ function TrocaChequeModal({ cheque, onClose, onSaved }) {
       });
 
       if (banco) {
-        await base44.entities.Banco.update(form.bank_id, {
-          current_balance: (banco.current_balance || 0) + (cheque.value || 0),
-        });
-        await base44.entities.CashFlow.create({
-          type: 'entrada',
-          category: 'recebimento_operacao',
-          amount: cheque.value || 0,
-          date: form.new_date,
-          description: `Recebimento via ${methodLabel} — cheque devolvido #${cheque.check_number} (${cheque.client_name})${form.notes ? ' — ' + form.notes : ''}`,
-          method: methodKey,
-          operation_id: cheque.operation_id,
+        // D3.1 — mesma chave de evento do outro modal de resolução: o cheque só
+        // é resolvido uma vez, então crédito e lançamento também só uma vez.
+        const chave = chaveEvento('resolucao_cheque', cheque.id);
+        await aplicarEventoBancario({
+          store: { updateWhere: (q, u) => base44.entities.Banco.updateMany(q, u) },
+          bankId: form.bank_id,
+          delta: cheque.value || 0,
+          eventKey: chave,
+          aoAplicar: () => base44.entities.CashFlow.create({
+            type: 'entrada',
+            category: 'recebimento_operacao',
+            amount: cheque.value || 0,
+            date: form.new_date,
+            description: `Recebimento via ${methodLabel} — cheque devolvido #${cheque.check_number} (${cheque.client_name})${form.notes ? ' — ' + form.notes : ''}`,
+            method: methodKey,
+            operation_id: cheque.operation_id,
+            bank_id: form.bank_id,
+            source_type: 'resolucao_cheque',
+            source_id: chave,
+          }),
         });
       }
 

@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { X, DollarSign } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { chaveEvento } from '@/lib/bankLedger';
+import { aplicarEventoBancario } from '@/lib/financeEvents';
 import { formatCurrency, formatDate, today } from '@/lib/finance';
+
+const bancoStore = { updateWhere: (q, u) => base44.entities.Banco.updateMany(q, u) };
 
 /**
  * Modal para registrar o recebimento do lucro/juros de uma prorrogação
@@ -30,26 +34,37 @@ export default function ReceberLucroProrrogacaoModal({ cheque, onClose, onSaved 
     const valorNum = parseFloat(valor);
     const banco = bancos.find(b => b.id === bancoId);
 
-    // Registra entrada no banco
-    await base44.entities.CashFlow.create({
-      type: 'entrada',
-      category: 'lucro_prorrogacao_cheque',
-      amount: valorNum,
-      date: dataPagamento,
-      description: `Lucro prorrogação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco?.name})`,
-      method: formaPagamento,
+    // D3.1 — crédito atômico com chave determinística: repetir o clique não
+    // credita duas vezes e não gera segundo lançamento. A identidade do evento
+    // é (cheque + data + valor), porque uma mesma prorrogação pode gerar lucros
+    // distintos em momentos distintos.
+    const chave = chaveEvento('lucro_prorrogacao', `${cheque.id}:${dataPagamento}:${valorNum}`);
+
+    const efeito = await aplicarEventoBancario({
+      store: bancoStore,
+      bankId: bancoId,
+      delta: valorNum,
+      eventKey: chave,
+      aoAplicar: () => base44.entities.CashFlow.create({
+        type: 'entrada',
+        category: 'lucro_prorrogacao_cheque',
+        amount: valorNum,
+        date: dataPagamento,
+        description: `Lucro prorrogação cheque #${cheque.check_number} — ${cheque.client_name} (Banco: ${banco?.name})`,
+        method: formaPagamento,
+        bank_id: bancoId,
+        source_type: 'lucro_prorrogacao',
+        source_id: chave,
+      }),
     });
 
-    // Atualiza saldo do banco
-    await base44.entities.Banco.update(bancoId, {
-      current_balance: (banco.current_balance || 0) + valorNum,
-    });
-
-    // Anota no cheque que o lucro foi recebido
-    const nota = `[LUCRO PRORROGAÇÃO RECEBIDO em ${dataPagamento}] ${formatCurrency(valorNum)} via ${formaPagamento.toUpperCase()} — ${banco?.name}`;
-    await base44.entities.Cheque.update(cheque.id, {
-      notes: cheque.notes ? `${cheque.notes}\n${nota}` : nota,
-    });
+    // Anota no cheque apenas quando o recebimento foi de fato registrado.
+    if (efeito.status === 'aplicado') {
+      const nota = `[LUCRO PRORROGAÇÃO RECEBIDO em ${dataPagamento}] ${formatCurrency(valorNum)} via ${formaPagamento.toUpperCase()} — ${banco?.name}`;
+      await base44.entities.Cheque.update(cheque.id, {
+        notes: cheque.notes ? `${cheque.notes}\n${nota}` : nota,
+      });
+    }
 
     setSaving(false);
     onSaved();

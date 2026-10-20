@@ -18,7 +18,10 @@
  *
  *  2. Os lançamentos são idempotentes pela origem
  *     (`source_type = transferencia_bancaria`, `source_id = <id>:<perna>`),
- *     reivindicados por compare-and-swap no diário com prazo de validade.
+ *     reivindicados por compare-and-swap NO DOCUMENTO DO BANCO — que tem `id`
+ *     único — com prazo de validade. (Até a D3 a reivindicação vivia no diário;
+ *     com dois diários criados em paralelo cada execução vencia no seu próprio
+ *     documento e o lançamento duplicava.)
  *
  *  3. O que sobra de janela vira ESTADO OBSERVÁVEL: o diário registra por perna
  *     se o saldo foi aplicado e se o lançamento existe. `diagnosticar` expõe a
@@ -27,6 +30,7 @@
  */
 import {
   applyBankDelta,
+  claimBankEvent,
   planoDePernas,
   planoDeEstorno,
   validarTransferencia,
@@ -34,7 +38,6 @@ import {
   diagnosticarTransferencia,
   CATEGORIA_TRANSFERENCIA,
   SOURCE_TRANSFERENCIA,
-  TTL_REIVINDICACAO_MS,
 } from './bankLedger.js';
 
 const lista = (res) => (Array.isArray(res) ? res : (res && res.items) || []);
@@ -87,7 +90,20 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
     });
 
     // Relê para eleger o canônico — a criação concorrente pode ter duplicado.
-    return diarioExistente(transferId);
+    const canonicoDoc = await diarioExistente(transferId);
+    if (!canonicoDoc) return null;
+
+    // `create` NÃO tem chave única (verificado: a plataforma ignora `id`
+    // explícito e aceita dois documentos com o mesmo `transfer_id`). Então a
+    // duplicidade NÃO é eliminada — ela é marcada. Não cancelamos: o documento
+    // excedente pode ter perna aplicada de verdade, e cancelar apagaria a
+    // evidência de um efeito real no saldo.
+    await diarioStore.updateWhere(
+      { transfer_id: transferId, id: { $ne: canonicoDoc.id } },
+      { $set: { duplicado: true } }
+    );
+
+    return canonicoDoc;
   }
 
   /** Escrita pontual na perna — nunca regrava o objeto `legs` inteiro. */
@@ -99,32 +115,28 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
 
   /**
    * Reivindica a criação do lançamento da perna. Só o vencedor cria.
-   * A reivindicação expira: execução morta não bloqueia para sempre.
+   *
+   * D3.1 — a reivindicação vive no DOCUMENTO DO BANCO, não no diário. Era essa
+   * a lacuna: com dois diários (criação concorrente), cada execução reivindicava
+   * no seu próprio documento, ambas venciam e o lançamento duplicava. O banco
+   * tem `id` único, então o CAS arbitra entre todas as execuções.
    */
-  async function reivindicarLancamento(diarioId, leg) {
-    const instante = relogio();
-    const limite = new Date(new Date(instante).getTime() - TTL_REIVINDICACAO_MS).toISOString();
-    const res = await diarioStore.updateWhere(
-      {
-        id: diarioId,
-        [`legs.${leg}.cashflow_id`]: { $exists: false },
-        $or: [
-          { [`legs.${leg}.cf_claimed_at`]: { $exists: false } },
-          { [`legs.${leg}.cf_claimed_at`]: { $lt: limite } },
-        ],
-      },
-      { $set: { [`legs.${leg}.cf_claimed_at`]: instante } }
-    );
-    return (Number(res && res.updated) || 0) > 0;
+  async function reivindicarLancamento(perna) {
+    return claimBankEvent({
+      store: bancoStore,
+      bankId: perna.bankId,
+      claimKey: perna.sourceId,
+      now: relogio(),
+    });
   }
 
-  async function garantirLancamento({ diarioId, transferId, perna, amount, date, description, fromName, toName }) {
+  async function garantirLancamento({ transferId, perna, amount, date, description, fromName, toName }) {
     const origem = { source_type: SOURCE_TRANSFERENCIA, source_id: perna.sourceId };
 
     const existentes = lista(await cashflowStore.filter(origem));
     if (existentes.length > 0) return { status: 'existente', id: existentes[0].id };
 
-    if (!(await reivindicarLancamento(diarioId, perna.leg))) {
+    if (!(await reivindicarLancamento(perna))) {
       const relidos = lista(await cashflowStore.filter(origem));
       return relidos.length > 0
         ? { status: 'existente', id: relidos[0].id }
@@ -186,7 +198,7 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
 
       // 2. Lançamento: idempotente pela origem, reivindicado por CAS.
       const lanc = await garantirLancamento({
-        diarioId, transferId: id, perna, amount: valor, date, description: desc, fromName, toName,
+        transferId: id, perna, amount: valor, date, description: desc, fromName, toName,
       });
       if (lanc.id) await marcarPerna(diarioId, perna.leg, { cashflow_id: lanc.id });
 
@@ -197,9 +209,17 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
     const completo = aplicadas === 2 && resultados.every((r) => r.lancamento !== 'pendente');
     const status = completo ? 'aplicada' : 'parcial';
 
-    await diarioStore.updateWhere({ id: diarioId }, { $set: { status }, $inc: { attempts: 1 } });
+    // Não REBAIXA diário já 'aplicada': numa corrida, a execução perdedora pode
+    // terminar depois e escrever 'parcial' sobre um estado que o vencedor
+    // completou. O estado final precisa refletir o efeito, não a ordem de término.
+    const filtroStatus = status === 'aplicada'
+      ? { id: diarioId }
+      : { id: diarioId, status: { $ne: 'aplicada' } };
+    await diarioStore.updateWhere(filtroStatus, { $set: { status }, $inc: { attempts: 1 } });
 
-    return { status, transferId: id, pernas: resultados };
+    // Devolve o estado AUTORITATIVO do diário, não o que esta execução achou.
+    const fim = await diarioExistente(id);
+    return { status: (fim && fim.status) || status, transferId: id, pernas: resultados };
   }
 
   /**
@@ -246,7 +266,6 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
         eventKey: perna.key,
       });
       const lanc = await garantirLancamento({
-        diarioId: estornoDoc.id,
         transferId: estornoId,
         perna,
         amount: valor,

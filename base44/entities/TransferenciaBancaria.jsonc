@@ -4,7 +4,7 @@
   "properties": {
     "transfer_id": {
       "type": "string",
-      "description": "Identificador EST\u00c1VEL da transfer\u00eancia. \u00c9 a chave de idempot\u00eancia: o mesmo pedido repetido (retry, duplo clique, duas abas) reusa este id e n\u00e3o duplica perna alguma. Tamb\u00e9m \u00e9 gravado em CashFlow.transfer_id."
+      "description": "Identificador EST\u00c1VEL da transfer\u00eancia. \u00c9 a chave de idempot\u00eancia: o mesmo pedido repetido (retry, duplo clique, duas abas) reusa este id e n\u00e3o duplica perna alguma. Tamb\u00e9m \u00e9 gravado em CashFlow.transfer_id. ATEN\u00c7\u00c3O: a plataforma n\u00e3o oferece chave \u00fanica em create \u2014 este campo N\u00c3O garante um \u00fanico documento. A unicidade do EFEITO FINANCEIRO \u00e9 garantida pelas chaves de evento no documento do Banco; a unicidade do REGISTRO \u00e9 apenas marcada em `duplicado`."
     },
     "from_bank_id": {
       "type": "string",
@@ -46,7 +46,7 @@
     },
     "legs": {
       "type": "object",
-      "description": "Estado de cada perna: { saida: { banco, cashflow_id, cf_claimed_at, aplicada_em }, entrada: {...} }. \u00c9 o que torna a falha parcial DETECT\u00c1VEL: perna com saldo aplicado e sem cashflow_id \u00e9 efeito incompleto."
+      "description": "Estado de cada perna: { saida: { banco, cashflow_id, aplicada_em }, entrada: {...} }. \u00c9 o que torna a falha parcial DETECT\u00c1VEL: perna com saldo aplicado e sem cashflow_id \u00e9 efeito incompleto."
     },
     "estorno_de": {
       "type": "string",
@@ -55,6 +55,11 @@
     "estornada_por": {
       "type": "string",
       "description": "transfer_id do estorno, quando este registro foi revertido."
+    },
+    "duplicado": {
+      "type": "boolean",
+      "default": false,
+      "description": "true = documento EXCEDENTE criado por concorr\u00eancia (a plataforma n\u00e3o tem chave \u00fanica em create: dois pedidos simult\u00e2neos com o mesmo transfer_id podem gerar dois registros). Apenas um documento por transfer_id \u00e9 eleito can\u00f4nico e recebe o estado das pernas. O excedente N\u00c3O \u00e9 cancelado automaticamente, porque as pernas podem ter efeito real no saldo \u2014 cancelar apagaria a evid\u00eancia. Nenhum efeito financeiro depende dele. Ver src/lib/transferEngine.js."
     },
     "attempts": {
       "type": "number",

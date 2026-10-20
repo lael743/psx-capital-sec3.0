@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
 import { X, AlertTriangle, DollarSign, RefreshCw, MessageCircle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { chaveEvento } from '@/lib/bankLedger';
+import { aplicarEventoBancario } from '@/lib/financeEvents';
 import { formatCurrency, formatDate, today } from '@/lib/finance';
+
+const bancoStore = { updateWhere: (q, u) => base44.entities.Banco.updateMany(q, u) };
 
 /**
  * Modal de resolução para cheques devolvidos.
@@ -133,17 +137,25 @@ export default function ChequeDevolvidoModal({ cheque, onClose, onSaved }) {
         return_reason: `Resolvido via ${methodLabel} em ${dataPagamento}. Taxa: ${formatCurrency(taxa)}.${notes ? ' ' + notes : ''}`,
       });
       if (banco) {
-        await base44.entities.Banco.update(bancoId, {
-          current_balance: (banco.current_balance || 0) + valorTotal,
-        });
-        await base44.entities.CashFlow.create({
-          type: 'entrada',
-          category: 'recebimento_operacao',
-          amount: valorTotal,
-          date: dataPagamento,
-          description: `Recebimento via ${methodLabel} — cheque devolvido #${cheque.check_number} (${cheque.client_name})${taxa > 0 ? ` incl. taxa ${formatCurrency(taxa)}` : ''}${notes ? ' — ' + notes : ''}`,
-          method: methodKey,
-          operation_id: cheque.operation_id,
+        // D3.1 — crédito atômico, uma vez por resolução do cheque.
+        const chave = chaveEvento('resolucao_cheque', cheque.id);
+        await aplicarEventoBancario({
+          store: bancoStore,
+          bankId: bancoId,
+          delta: valorTotal,
+          eventKey: chave,
+          aoAplicar: () => base44.entities.CashFlow.create({
+            type: 'entrada',
+            category: 'recebimento_operacao',
+            amount: valorTotal,
+            date: dataPagamento,
+            description: `Recebimento via ${methodLabel} — cheque devolvido #${cheque.check_number} (${cheque.client_name})${taxa > 0 ? ` incl. taxa ${formatCurrency(taxa)}` : ''}${notes ? ' — ' + notes : ''}`,
+            method: methodKey,
+            operation_id: cheque.operation_id,
+            bank_id: bancoId,
+            source_type: 'resolucao_cheque',
+            source_id: chave,
+          }),
         });
       }
       // Baixa no saldo da operação

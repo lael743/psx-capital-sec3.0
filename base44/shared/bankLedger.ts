@@ -41,6 +41,28 @@
 /** Campo do Banco que guarda as chaves de evento já aplicadas. */
 export const LEDGER_KEYS_FIELD = 'applied_ledger_keys';
 
+/**
+ * Campo do Banco que guarda REIVINDICAÇÕES de efeito secundário (ex.: "quem
+ * cria o lançamento desta perna"), como LISTA de chaves.
+ *
+ * Por que no BANCO e não no diário da transferência (D3.1): o Banco tem `id`
+ * único, o diário não. Uma reivindicação gravada no diário só arbitra entre
+ * execuções que enxergam O MESMO diário — e a criação concorrente pode gerar
+ * dois. Gravada no banco, ela arbitra entre todas.
+ *
+ * Por que LISTA e não mapa chave→instante: a plataforma REJEITA caminho
+ * pontilhado (`ledger_claims.<chave>`) quando o campo não existe no documento —
+ * e os bancos já cadastrados não têm esse campo. Lista com `$ne` + `$push`
+ * funciona mesmo com o campo ausente (é o mesmo mecanismo já usado com sucesso
+ * em `applied_ledger_keys`). Verificado na plataforma, não presumido.
+ *
+ * CUSTO DESSA ESCOLHA: sem carimbo de tempo, a reivindicação NÃO expira
+ * sozinha. Se um processo morrer entre reivindicar e criar o lançamento, aquela
+ * perna fica sem lançamento até alguém chamar `liberarReivindicacao`. O saldo
+ * não é afetado e o estado é DETECTÁVEL (`diagnosticarTransferencia`).
+ */
+export const CLAIMS_FIELD = 'ledger_claims';
+
 /** Janela de validade de uma reivindicação de lançamento (ms). */
 export const TTL_REIVINDICACAO_MS = 5 * 60 * 1000;
 
@@ -104,6 +126,43 @@ export async function applyBankDelta({ store, bankId, delta, eventKey }) {
 
   const updated = Number(res && res.updated) || 0;
   return { status: updated > 0 ? 'aplicado' : 'ja_aplicado' };
+}
+
+/**
+ * Reivindica um efeito SECUNDÁRIO de um evento (normalmente a criação do
+ * lançamento em `CashFlow`) no documento do banco.
+ *
+ * Compare-and-swap: só uma execução — qualquer que seja o diário que ela
+ * esteja usando — recebe `true`. A reivindicação expira, então uma execução
+ * morta não bloqueia o evento indefinidamente.
+ *
+ * @returns {Promise<boolean>} true se esta execução ganhou o direito de agir
+ */
+export async function claimBankEvent({ store, bankId, claimKey }) {
+  if (!bankId) return false;
+  if (!claimKey) throw new Error('[BankLedger] claimKey é obrigatório');
+
+  const res = await store.updateWhere(
+    { id: bankId, [CLAIMS_FIELD]: { $ne: claimKey } },
+    { $push: { [CLAIMS_FIELD]: claimKey } }
+  );
+
+  return (Number(res && res.updated) || 0) > 0;
+}
+
+/**
+ * Libera uma reivindicação órfã (processo morto entre reivindicar e concluir).
+ * Operação ADMINISTRATIVA e explícita: liberar antes da hora permite que outra
+ * execução crie o lançamento — só faça isso quando a perna estiver realmente
+ * incompleta (sem `cashflow_id`).
+ */
+export async function liberarReivindicacao({ store, bankId, claimKey }) {
+  if (!bankId || !claimKey) return false;
+  const res = await store.updateWhere(
+    { id: bankId },
+    { $pull: { [CLAIMS_FIELD]: claimKey } }
+  );
+  return (Number(res && res.updated) || 0) > 0;
 }
 
 // ─────────────────────────── regra de transferência ────────────────────────
