@@ -35,10 +35,22 @@
       "default": 0,
       "description": "Saldo inicial cadastrado"
     },
+    "ledger_start_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Data de REFER\u00caNCIA do initial_balance (\u00e2ncora do livro-caixa). NUNCA preenchida automaticamente: contas sem data validada permanecem sem o campo, e o c\u00e1lculo em modo sombra as trata como n\u00e3o exatas. Ver Fase D3 \u00a75."
+    },
+    "applied_ledger_keys": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Chaves de evento financeiro j\u00e1 aplicadas a current_balance. S\u00e3o gravadas na MESMA escrita at\u00f4mica do $inc, por compare-and-swap: \u00e9 o que impede cr\u00e9dito/d\u00e9bito duplo e perda de atualiza\u00e7\u00e3o concorrente. NUNCA remover chaves de eventos ainda reprocess\u00e1veis. Ver src/lib/bankLedger.js."
+    },
     "current_balance": {
       "type": "number",
       "default": 0,
-      "description": "Saldo atual calculado"
+      "description": "Saldo atual OFICIAL. Continua sendo a fonte de verdade da produ\u00e7\u00e3o \u2014 o c\u00e1lculo derivado da D2 permanece em modo sombra e n\u00e3o o substitui."
     },
     "is_default_repasse": {
       "type": "boolean",

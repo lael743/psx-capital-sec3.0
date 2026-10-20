@@ -111,6 +111,8 @@ function contaVazia(banco) {
     saldo_calculado: 0,
     lancamentos_considerados: 0,
     lancamentos_ignorados: 0,
+    inicio_livro: banco.ledger_start_date || null,
+    anteriores_ao_inicio: 0,
   };
 }
 
@@ -166,6 +168,17 @@ export function calcularSaldosSombra({ bancos = [], lancamentos = [], dataBase }
       naoAtribuidos.quantidade += 1;
       if (entrada) naoAtribuidos.valor_entrada += valor;
       else naoAtribuidos.valor_saida += valor;
+      continue;
+    }
+
+    // Data de referência do saldo inicial: nada anterior a ela pertence a este
+    // livro. Sem `ledger_start_date` não há corte — e nenhum é inventado.
+    if (
+      conta.inicio_livro &&
+      ISO_DATE.test(String(conta.inicio_livro)) &&
+      String(cf.date) < String(conta.inicio_livro)
+    ) {
+      conta.anteriores_ao_inicio += 1;
       continue;
     }
 
@@ -316,30 +329,64 @@ export function analisarDivergencias({ bancos = [], lancamentos = [], dataBase }
     if (ids.length > 1) duplicidades.push({ chave, ids, ocorrencias: ids.length });
   }
 
-  // Pernas de transferência: pareamento por valor + data. Duas pernas por
-  // evento (saida + entrada). Ímpar = transferência incompleta.
-  const porValorData = new Map();
+  // Pernas de transferência: pareamento EXCLUSIVAMENTE por `transfer_id`.
+  // Valor + data NÃO é critério de pareamento — foi o que produzia atribuição
+  // falsa no histórico. Perna sem `transfer_id` é "sem identificador": não é
+  // pareada com nada e, por isso, nunca pode ser declarada completa.
+
+  const porTransferId = new Map();
+  const transferenciasSemIdentificador = [];
   for (const t of transferencias) {
-    const k = `${t.date}::${Number(t.amount).toFixed(2)}`;
-    if (!porValorData.has(k)) porValorData.set(k, { saida: 0, entrada: 0, ids: [] });
-    const g = porValorData.get(k);
-    if (t.type === 'saida') g.saida += 1;
-    else if (t.type === 'entrada') g.entrada += 1;
-    g.ids.push(t.id);
+    if (!t.transfer_id) {
+      transferenciasSemIdentificador.push(t.id);
+      continue;
+    }
+    if (!porTransferId.has(t.transfer_id)) porTransferId.set(t.transfer_id, []);
+    porTransferId.get(t.transfer_id).push(t);
   }
 
+  const soma = (arr) => arr.reduce((s, x) => s + (Number(x.amount) || 0), 0);
+  const transferenciasCompletas = [];
   const transferenciasIncompletas = [];
-  for (const [k, g] of porValorData.entries()) {
-    if (g.saida !== g.entrada) {
+
+  for (const [tid, legs] of porTransferId.entries()) {
+    const saidas = legs.filter((l) => l.type === 'saida');
+    const entradas = legs.filter((l) => l.type === 'entrada');
+    const valSaida = soma(saidas);
+    const valEntrada = soma(entradas);
+
+    const registro = {
+      transfer_id: tid,
+      saidas: valSaida,
+      entradas: valEntrada,
+      ids: legs.map((l) => l.id),
+      contas_distintas: new Set(legs.map((l) => l.bank_id || null)).size,
+    };
+
+    const equilibrada =
+      saidas.length === 1 &&
+      entradas.length === 1 &&
+      Math.abs(valSaida - valEntrada) <= TOLERANCIA;
+
+    if (equilibrada) {
+      transferenciasCompletas.push(registro);
+    } else {
       transferenciasIncompletas.push({
-        chave: k,
-        saidas: g.saida,
-        entradas: g.entrada,
-        ids: g.ids,
+        ...registro,
         detalhe:
-          'Pernas de transferência não equilibram: o consolidado fica inflado/deflacionado pelo valor órfão',
+          'Pernas do mesmo transfer_id não formam um par saída/entrada equilibrado — o consolidado fica inflado/deflacionado pelo valor órfão',
       });
     }
+  }
+
+  // Perna sem identidade nunca é comprovadamente completa: conta como incompleta
+  // e é listada à parte para não se confundir com par quebrado.
+  for (const id of transferenciasSemIdentificador) {
+    transferenciasIncompletas.push({
+      transfer_id: null,
+      ids: [id],
+      detalhe: 'Perna sem transfer_id: pareamento por valor/data não é atribuição válida',
+    });
   }
 
   const globalInconclusivo = calc.nao_atribuidos.quantidade > 0;
@@ -407,7 +454,16 @@ export function analisarDivergencias({ bancos = [], lancamentos = [], dataBase }
       saldo_calculado: c.saldo_calculado,
       diferenca,
       lancamentos_considerados: c.lancamentos_considerados,
+      anteriores_ao_inicio: c.anteriores_ao_inicio,
       classificacao,
+      // Precisão declarada: sem data de referência do saldo inicial, nenhum
+      // cálculo histórico desta conta pode ser apresentado como exato.
+      precisao:
+        c.saldo_calculado === null
+          ? 'indeterminada'
+          : c.inicio_livro && ISO_DATE.test(String(c.inicio_livro))
+            ? 'exata'
+            : 'sem_data_de_referencia',
       explicacoes,
     };
   });
@@ -420,7 +476,9 @@ export function analisarDivergencias({ bancos = [], lancamentos = [], dataBase }
     duplicidades: duplicidades.length,
     lancamentos_sem_origem: semOrigem.length,
     lancamentos_sem_conta: semConta.length,
+    transferencias_completas: transferenciasCompletas.length,
     transferencias_incompletas: transferenciasIncompletas.length,
+    transferencias_sem_identificador: transferenciasSemIdentificador.length,
     inconsistencias_data: calc.inconsistencias_data.length,
   };
 
@@ -437,7 +495,9 @@ export function analisarDivergencias({ bancos = [], lancamentos = [], dataBase }
       duplicidades,
       lancamentos_sem_origem: semOrigem,
       lancamentos_sem_conta: semConta,
+      transferencias_completas: transferenciasCompletas,
       transferencias_incompletas: transferenciasIncompletas,
+      transferencias_sem_identificador: transferenciasSemIdentificador,
       inconsistencias_data: calc.inconsistencias_data,
     },
     resumo,

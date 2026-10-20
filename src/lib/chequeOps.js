@@ -21,6 +21,7 @@ import {
   claimCheque,
 } from '@/lib/chequeCore';
 import { createChequeCashFlow } from '@/lib/cashFlowHelper';
+import { applyBankDelta } from '@/lib/bankLedger';
 import { syncChequeCompensation, syncChequeReversal } from '@/lib/syncCheque';
 
 /** Adaptador base44 para o CAS. `updateMany` devolve { updated: <n> }. */
@@ -29,13 +30,21 @@ export const chequeStore = {
   read: (id) => base44.entities.Cheque.get(id).catch(() => null),
 };
 
-async function creditarBanco(bankId, delta) {
-  if (!bankId || !delta) return;
-  const banco = await base44.entities.Banco.get(bankId).catch(() => null);
-  if (!banco) return;
-  await base44.entities.Banco.update(bankId, {
-    current_balance: (banco.current_balance || 0) + delta,
-  });
+/** Adaptador base44 para o efeito de saldo (compare-and-swap no Banco). */
+export const bancoStore = {
+  updateWhere: (query, update) => base44.entities.Banco.updateMany(query, update),
+};
+
+/**
+ * Aplica o efeito de saldo do evento de cheque.
+ *
+ * NÃO lê o saldo antes: um `$inc` com guarda de chave é aplicado pelo servidor
+ * sobre o valor vigente. A leitura-modificação-escrita anterior perdia
+ * atualização quando dois cheques compensavam ao mesmo tempo — o CAS protegia o
+ * evento, não o saldo.
+ */
+export async function creditarBanco({ bankId, delta, eventKey }) {
+  return applyBankDelta({ store: bancoStore, bankId, delta, eventKey });
 }
 
 /**
@@ -72,7 +81,11 @@ export async function compensateCheque({ cheque, bankId, bankName, date }) {
     operation_id: cheque.operation_id,
   });
 
-  await creditarBanco(bankId, cheque.value || 0);
+  await creditarBanco({
+    bankId,
+    delta: cheque.value || 0,
+    eventKey: `${keys.compensation.source_type}:${keys.compensation.source_id}`,
+  });
   await syncChequeCompensation({ ...cheque, ...patch });
 
   return { status: 'aplicado', claim };
@@ -119,7 +132,11 @@ export async function revertChequeCompensation({ cheque, bankId, bankName, date 
     operation_id: current.operation_id,
   });
 
-  await creditarBanco(bankId, -(current.value || 0));
+  await creditarBanco({
+    bankId,
+    delta: -(current.value || 0),
+    eventKey: `${keys.reversal.source_type}:${keys.reversal.source_id}`,
+  });
   await syncChequeReversal({ ...current, ...patch });
 
   return { status: 'aplicado', claim };

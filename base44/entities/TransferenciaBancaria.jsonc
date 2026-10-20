@@ -1,0 +1,77 @@
+{
+  "name": "TransferenciaBancaria",
+  "type": "object",
+  "properties": {
+    "transfer_id": {
+      "type": "string",
+      "description": "Identificador EST\u00c1VEL da transfer\u00eancia. \u00c9 a chave de idempot\u00eancia: o mesmo pedido repetido (retry, duplo clique, duas abas) reusa este id e n\u00e3o duplica perna alguma. Tamb\u00e9m \u00e9 gravado em CashFlow.transfer_id."
+    },
+    "from_bank_id": {
+      "type": "string",
+      "description": "Conta de origem (perna de sa\u00edda)."
+    },
+    "from_bank_name": {
+      "type": "string"
+    },
+    "to_bank_id": {
+      "type": "string",
+      "description": "Conta de destino (perna de entrada)."
+    },
+    "to_bank_name": {
+      "type": "string"
+    },
+    "amount": {
+      "type": "number",
+      "description": "Valor transferido (sempre positivo). O sinal vem da perna."
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "description": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "pendente",
+        "parcial",
+        "aplicada",
+        "estornada",
+        "cancelada",
+        "falha"
+      ],
+      "default": "pendente",
+      "description": "pendente = nenhuma perna confirmada; parcial = uma perna aplicada (falha entre as duas); aplicada = as duas pernas confirmadas; estornada = revertida por transfer\u00eancia contr\u00e1ria; cancelada = anulada antes de qualquer efeito."
+    },
+    "legs": {
+      "type": "object",
+      "description": "Estado de cada perna: { saida: { banco, cashflow_id, cf_claimed_at, aplicada_em }, entrada: {...} }. \u00c9 o que torna a falha parcial DETECT\u00c1VEL: perna com saldo aplicado e sem cashflow_id \u00e9 efeito incompleto."
+    },
+    "estorno_de": {
+      "type": "string",
+      "description": "transfer_id da transfer\u00eancia original, quando este registro \u00c9 o estorno."
+    },
+    "estornada_por": {
+      "type": "string",
+      "description": "transfer_id do estorno, quando este registro foi revertido."
+    },
+    "attempts": {
+      "type": "number",
+      "default": 0
+    },
+    "last_error": {
+      "type": "string"
+    },
+    "requested_by": {
+      "type": "string",
+      "description": "E-mail de quem solicitou."
+    }
+  },
+  "required": [
+    "transfer_id",
+    "from_bank_id",
+    "to_bank_id",
+    "amount"
+  ]
+}

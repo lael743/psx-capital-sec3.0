@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { X, ArrowRight, ArrowLeftRight } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { X, ArrowRight, ArrowLeftRight, AlertTriangle } from 'lucide-react';
+import { novoTransferId } from '@/lib/bankLedger';
+import { executarTransferencia } from '@/lib/transferFlow';
 import { formatCurrency, today } from '@/lib/finance';
 
 export default function TransferenciaBancosModal({ bancos, onClose, onSaved }) {
@@ -10,6 +11,9 @@ export default function TransferenciaBancosModal({ bancos, onClose, onSaved }) {
   const [data, setData] = useState(today());
   const [descricao, setDescricao] = useState('');
   const [saving, setSaving] = useState(false);
+  const [erro, setErro] = useState('');
+  // Id estável: repetir o clique reenvia o MESMO pedido e não duplica perna.
+  const [transferId] = useState(() => novoTransferId());
 
   const origem = bancos.find(b => b.id === origemId);
   const destino = bancos.find(b => b.id === destinoId);
@@ -19,41 +23,30 @@ export default function TransferenciaBancosModal({ bancos, onClose, onSaved }) {
 
   const save = async () => {
     setSaving(true);
-    const desc = descricao.trim() || `Transferência de ${origem?.name} para ${destino?.name}`;
+    setErro('');
+    try {
+      const res = await executarTransferencia({
+        transferId,
+        fromBank: origem,
+        toBank: destino,
+        amount: valorNum,
+        date: data,
+        description: descricao.trim(),
+      });
 
-    // Débito na origem
-    await base44.entities.Banco.update(origemId, {
-      current_balance: (origem.current_balance || 0) - valorNum,
-    });
+      if (res.status === 'parcial') {
+        setErro('Transferência ficou pela metade (uma conta movimentada, a outra não). Nada foi duplicado — avise o financeiro para recuperar.');
+        setSaving(false);
+        onSaved();
+        return;
+      }
 
-    // Crédito no destino
-    await base44.entities.Banco.update(destinoId, {
-      current_balance: (destino.current_balance || 0) + valorNum,
-    });
-
-    // Registra saída no fluxo de caixa
-    await base44.entities.CashFlow.create({
-      type: 'saida',
-      category: 'transferencia_interna',
-      amount: valorNum,
-      date: data,
-      description: `[SAÍDA] ${desc}`,
-      method: 'transferencia',
-    });
-
-    // Registra entrada no fluxo de caixa
-    await base44.entities.CashFlow.create({
-      type: 'entrada',
-      category: 'transferencia_interna',
-      amount: valorNum,
-      date: data,
-      description: `[ENTRADA] ${desc}`,
-      method: 'transferencia',
-    });
-
-    setSaving(false);
-    onSaved();
-    onClose();
+      onSaved();
+      onClose();
+    } catch (e) {
+      setErro(e.message || 'Não foi possível concluir a transferência.');
+      setSaving(false);
+    }
   };
 
   return (
@@ -163,6 +156,13 @@ export default function TransferenciaBancosModal({ bancos, onClose, onSaved }) {
             </div>
           )}
         </div>
+
+        {erro && (
+          <div className="mx-5 mb-3 flex items-start gap-2 bg-red-50 border border-red-200 rounded-xl p-3">
+            <AlertTriangle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <p className="text-xs text-red-800">{erro}</p>
+          </div>
+        )}
 
         <div className="flex justify-end gap-2 px-5 pb-5">
           <button onClick={onClose} className="px-4 py-2 text-sm border border-border rounded-lg hover:bg-gray-50">

@@ -2,7 +2,12 @@ import { useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { logAction } from '@/lib/audit';
+import { applyBankDelta, chaveEvento, novoTransferId } from '@/lib/bankLedger';
 import { formatCurrency } from '@/lib/finance';
+
+const bancoStore = {
+  updateWhere: (query, update) => base44.entities.Banco.updateMany(query, update),
+};
 
 export default function LancamentoAvulsoModal({ banco, onClose, onSaved }) {
   const [form, setForm] = useState({
@@ -13,6 +18,8 @@ export default function LancamentoAvulsoModal({ banco, onClose, onSaved }) {
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // Id estável do evento: repetir o clique não aplica o saldo duas vezes.
+  const [eventId] = useState(() => `avulso-${novoTransferId()}`);
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -31,14 +38,23 @@ export default function LancamentoAvulsoModal({ banco, onClose, onSaved }) {
 
     const amount = parseFloat(form.amount);
     const saldoAnterior = banco.current_balance || 0;
-    const novoSaldo = form.type === 'entrada'
-      ? saldoAnterior + amount
-      : saldoAnterior - amount;
 
-    // Atualiza saldo do banco
-    await base44.entities.Banco.update(banco.id, { current_balance: novoSaldo });
+    // Efeito de saldo atômico: nunca sobre uma leitura antiga.
+    const efeito = await applyBankDelta({
+      store: bancoStore,
+      bankId: banco.id,
+      delta: form.type === 'entrada' ? amount : -amount,
+      eventKey: chaveEvento('lancamento_avulso', eventId),
+    });
 
-    // Registra no CashFlow
+    if (efeito.status === 'ja_aplicado') {
+      setSaving(false);
+      setError('Este lançamento já foi aplicado nesta conta.');
+      return;
+    }
+
+    // Registra no CashFlow — COM a conta identificada e origem estável
+    const bancoDepois = await base44.entities.Banco.get(banco.id).catch(() => null);
     await base44.entities.CashFlow.create({
       type: form.type,
       category: 'lancamento_avulso',
@@ -46,7 +62,10 @@ export default function LancamentoAvulsoModal({ banco, onClose, onSaved }) {
       date: form.date,
       description: `[Lançamento Avulso] ${banco.name} — ${form.motivo}`,
       method: 'outro',
-      balance_after: novoSaldo,
+      bank_id: banco.id,
+      source_type: 'lancamento_avulso',
+      source_id: eventId,
+      balance_after: bancoDepois?.current_balance ?? null,
     });
 
     // Audit log
@@ -56,7 +75,7 @@ export default function LancamentoAvulsoModal({ banco, onClose, onSaved }) {
       entityId: banco.id,
       description: `Lançamento avulso (${form.type === 'entrada' ? 'entrada' : 'saída'}) de ${formatCurrency(amount)} no banco ${banco.name}. Motivo: ${form.motivo}`,
       before: { current_balance: saldoAnterior },
-      after: { current_balance: novoSaldo },
+      after: { current_balance: bancoDepois?.current_balance ?? null },
     });
 
     setSaving(false);

@@ -1,4 +1,5 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
+import { applyBankDelta, chaveEvento } from '../../shared/bankLedger.ts';
 
 Deno.serve(async (req) => {
   try {
@@ -59,24 +60,52 @@ Deno.serve(async (req) => {
 
     const today = new Date().toISOString().split('T')[0];
     const netValue = operation.net_value || 0;
+    if (!(netValue > 0)) {
+      return Response.json({ error: 'Operação sem valor líquido para repasse' }, { status: 400 });
+    }
 
-    // Debita saldo do banco
-    const newBalance = (bank.current_balance || 0) - netValue;
-    await base44.asServiceRole.entities.Banco.update(disbursement_bank_id, {
-      current_balance: newBalance,
+    const sourceType = 'repasse_cliente';
+    const store = { updateWhere: (q, u) => base44.asServiceRole.entities.Banco.updateMany(q, u) };
+
+    const criarLancamento = () =>
+      base44.asServiceRole.entities.CashFlow.create({
+        type: 'saida',
+        category: sourceType,
+        amount: netValue,
+        date: today,
+        description: `Repasse ao cliente ${operation.client_name} — Banco: ${disbursement_bank_name} — Op. #${operation_id.slice(-6).toUpperCase()} — Auth: ${assessorMatch.name}`,
+        operation_id,
+        bank_id: disbursement_bank_id,
+        source_type: sourceType,
+        source_id: operation_id,
+        method: 'transferencia',
+      });
+
+    // Efeito de saldo: incremento atômico com guarda de chave no mesmo documento.
+    const efeito = await applyBankDelta({
+      store,
+      bankId: disbursement_bank_id,
+      delta: -netValue,
+      eventKey: chaveEvento(sourceType, operation_id),
     });
 
-    // Registra fluxo de caixa
-    await base44.asServiceRole.entities.CashFlow.create({
-      type: 'saida',
-      category: 'repasse_cliente',
-      amount: netValue,
-      date: today,
-      description: `Repasse ao cliente ${operation.client_name} — Banco: ${disbursement_bank_name} — Op. #${operation_id.slice(-6).toUpperCase()} — Auth: ${assessorMatch.name}`,
-      operation_id: operation_id,
-      method: 'transferencia',
-      balance_after: newBalance,
-    });
+    if (efeito.status === 'ja_aplicado') {
+      const existentes = await base44.asServiceRole.entities.CashFlow.filter({
+        source_type: sourceType,
+        source_id: operation_id,
+      });
+      if (!existentes || existentes.length === 0) await criarLancamento();
+      const atual = await base44.asServiceRole.entities.Banco.get(disbursement_bank_id);
+      return Response.json({
+        success: true,
+        duplicate: true,
+        message: 'Repasse já havia sido contabilizado para esta operação',
+        new_bank_balance: atual?.current_balance ?? null,
+        authorized_by: assessorMatch.name,
+      });
+    }
+
+    await criarLancamento();
 
     // Atualiza operação para ativo
     await base44.asServiceRole.entities.Operation.update(operation_id, {
@@ -105,9 +134,11 @@ Deno.serve(async (req) => {
       },
     });
 
+    const bancoAtual = await base44.asServiceRole.entities.Banco.get(disbursement_bank_id);
+
     return Response.json({
       success: true,
-      new_bank_balance: newBalance,
+      new_bank_balance: bancoAtual?.current_balance ?? null,
       authorized_by: assessorMatch.name,
     });
   } catch (error) {
