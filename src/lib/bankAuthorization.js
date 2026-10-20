@@ -49,10 +49,27 @@ export const ACOES_BANCARIAS = Object.freeze({
   // D4.2 — eventos de caixa migrados para o servidor.
   LANCAR: 'lancar',
   REMESSA: 'remessa',
+  // M1 — compensação e estorno de cheque migrados para o servidor.
+  COMPENSAR_CHEQUE: 'compensar_cheque',
+  ESTORNAR_CHEQUE: 'estornar_cheque',
+  INSPECIONAR_CHEQUE: 'inspecionar_cheque',
+  RECUPERAR_CHEQUE: 'recuperar_lancamento_cheque',
 });
 
 /** Chave de página usada pelo controle de acesso existente (pageAccess.js). */
 export const PAGINA_BANCOS = 'bancos';
+/** M1 — tela de Cheques, que também dispara compensação e estorno. */
+export const PAGINA_CHEQUES = 'cheques';
+
+/**
+ * M1 — ações de cheque valem com QUALQUER uma das telas que as disparam:
+ * a compensação é feita tanto na página de Cheques quanto no detalhe do banco.
+ */
+const PAGINAS_POR_ACAO = Object.freeze({
+  [ACOES_BANCARIAS.COMPENSAR_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
+  [ACOES_BANCARIAS.ESTORNAR_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
+  [ACOES_BANCARIAS.INSPECIONAR_CHEQUE]: Object.freeze([PAGINA_CHEQUES, PAGINA_BANCOS]),
+});
 
 /** Ações que um operador com a página liberada pode executar. */
 const OPERACIONAIS = Object.freeze([
@@ -60,6 +77,9 @@ const OPERACIONAIS = Object.freeze([
   ACOES_BANCARIAS.INSPECIONAR,
   ACOES_BANCARIAS.LANCAR,
   ACOES_BANCARIAS.REMESSA,
+  ACOES_BANCARIAS.COMPENSAR_CHEQUE,
+  ACOES_BANCARIAS.ESTORNAR_CHEQUE,
+  ACOES_BANCARIAS.INSPECIONAR_CHEQUE,
 ]);
 
 /** Ações de natureza administrativa (reversão e recuperação). */
@@ -67,6 +87,7 @@ const ADMINISTRATIVAS = Object.freeze([
   ACOES_BANCARIAS.ESTORNAR,
   ACOES_BANCARIAS.RECUPERAR,
   ACOES_BANCARIAS.LIBERAR_REIVINDICACAO,
+  ACOES_BANCARIAS.RECUPERAR_CHEQUE,
 ]);
 
 /**
@@ -105,12 +126,21 @@ export function autorizarMovimentacaoBancaria(usuario, acao) {
   }
 
   const paginas = Array.isArray(usuario.allowed_pages) ? usuario.allowed_pages : [];
-  if (!paginas.includes(PAGINA_BANCOS)) {
+  const exigidas = PAGINAS_POR_ACAO[acao] || [PAGINA_BANCOS];
+  if (!exigidas.some((pagina) => paginas.includes(pagina))) {
+    if (exigidas.length === 1) {
+      return {
+        autorizado: false,
+        papel,
+        pagina_exigida: exigidas[0],
+        motivo: 'Página de Bancos não liberada para este usuário.',
+      };
+    }
     return {
       autorizado: false,
       papel,
-      pagina_exigida: PAGINA_BANCOS,
-      motivo: 'Página de Bancos não liberada para este usuário.',
+      pagina_exigida: exigidas.join('|'),
+      motivo: 'Página de Cheques ou Bancos não liberada para este usuário.',
     };
   }
 

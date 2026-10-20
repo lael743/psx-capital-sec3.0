@@ -9,6 +9,46 @@
 import { requiresOperationId, requiresBankId } from './cashFlowRules.ts';
 
 /**
+ * Cria o lancamento de caixa de um evento de CHEQUE com origem estavel.
+ *
+ * M1 — espelho EXATO de `createChequeCashFlow` de src/lib/cashFlowHelper.js.
+ * Categorias de cheque sao operacionais (exigem operation_id) E bancarias
+ * (exigem bank_id); cheque sem operacao vinculada nao pode satisfazer a
+ * exigencia de operation_id, entao o caminho e separado — mas com a MESMA
+ * chave de idempotencia, garantindo o mesmo resultado nos dois casos.
+ */
+export async function createChequeCashFlow(base44: any, params: {
+  category: string;
+  amount: number;
+  date: string;
+  description: string;
+  type?: string;
+  method?: string;
+  operation_id?: string;
+  bank_id?: string;
+  source_type?: string;
+  source_id?: string;
+  payment_id?: string;
+  balance_after?: number;
+}) {
+  if (params.operation_id) {
+    return createOperationalCashFlow(base44, params);
+  }
+
+  const existing = await base44.entities.CashFlow.filter({
+    source_type: params.source_type,
+    source_id: params.source_id,
+  });
+  if (existing && existing.length > 0) {
+    return { status: 'duplicate', existing: existing[0] };
+  }
+
+  const { type = 'entrada', operation_id, ...rest } = params;
+  const created = await base44.entities.CashFlow.create({ type, ...rest });
+  return { status: 'created', cashflow: created };
+}
+
+/**
  * Cria um CashFlow operacional com validacao de integridade e idempotencia.
  *
  * @param base44 - Instancia do client base44 (createClientFromRequest)
