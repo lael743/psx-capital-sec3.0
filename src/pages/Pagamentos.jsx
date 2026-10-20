@@ -22,6 +22,8 @@ export default function Pagamentos() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [filterMethod, setFilterMethod] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
 
   useEffect(() => {
     fetchAll('Payment', '-payment_date').then(data => {
@@ -33,7 +35,10 @@ export default function Pagamentos() {
   const filtered = payments.filter(p => {
     const matchSearch = !search || p.client_name?.toLowerCase().includes(search.toLowerCase());
     const matchMethod = !filterMethod || p.method === filterMethod;
-    return matchSearch && matchMethod;
+    const paymentDate = (p.payment_date || '').slice(0, 10);
+    const matchDateFrom = !dateFrom || paymentDate >= dateFrom;
+    const matchDateTo = !dateTo || paymentDate <= dateTo;
+    return matchSearch && matchMethod && matchDateFrom && matchDateTo;
   });
 
   const total = filtered.reduce((s, p) => s + (p.amount || 0), 0);
@@ -61,6 +66,18 @@ export default function Pagamentos() {
           </button>
         }
       />
+
+      <div className="flex flex-col sm:flex-row sm:items-end gap-3 mb-5 p-4 bg-white border border-border rounded-xl">
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data inicial</label>
+          <input type="date" value={dateFrom} max={dateTo || undefined} onChange={e => setDateFrom(e.target.value)} className="w-full input-field" />
+        </div>
+        <div className="flex-1">
+          <label className="block text-xs font-medium text-muted-foreground mb-1.5">Data final</label>
+          <input type="date" value={dateTo} min={dateFrom || undefined} onChange={e => setDateTo(e.target.value)} className="w-full input-field" />
+        </div>
+        <button onClick={() => { setDateFrom(''); setDateTo(''); }} className="px-3 py-2.5 text-sm border border-border rounded-lg hover:bg-gray-50">Limpar período</button>
+      </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <StatCard label="Total Recebido" value={formatCurrency(total)} icon={DollarSign} variant="gold" />

@@ -6,6 +6,7 @@ import { Plus, Search, FileText, ChevronDown, ChevronRight, QrCode, Loader2 } fr
 import StatusBadge from '@/components/ui/StatusBadge';
 import ConfirmDialog from '@/components/ui/ConfirmDialog';
 import AsaasBatchModal from '@/components/asaas/AsaasBatchModal';
+import { fetchAll } from '@/lib/fetchAll';
 
 export default function Boletos() {
   const [operacoes, setOperacoes] = useState([]);
@@ -17,7 +18,7 @@ export default function Boletos() {
   const [confirm, setConfirm] = useState({ open: false, title: '', message: '', confirmLabel: 'Confirmar', onConfirm: null });
 
   useEffect(() => {
-    base44.entities.Operation.list('-created_date', 500).then(ops => {
+    fetchAll('Operation', '-created_date').then(ops => {
       const boletos = ops.filter(o => (o.type === 'boleto' || o.type === 'emprestimo') && o.etapa !== 'rejeitada');
       setOperacoes(boletos);
       setLoading(false);
@@ -59,7 +60,7 @@ export default function Boletos() {
   };
 
   const reloadOps = () => {
-    base44.entities.Operation.list('-created_date', 500).then(ops => {
+    fetchAll('Operation', '-created_date').then(ops => {
       setOperacoes(ops.filter(o => (o.type === 'boleto' || o.type === 'emprestimo') && o.etapa !== 'rejeitada'));
     });
   };

@@ -22,7 +22,7 @@ export default function Bancos() {
 
   const load = async () => {
     const [bks, chqs] = await Promise.all([
-      base44.entities.Banco.list('-created_date', 100),
+      fetchAll('Banco', '-created_date'),
       fetchAll('Cheque'),
     ]);
     setBancos(bks);
