@@ -1,11 +1,21 @@
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.44';
 import { asaasRequest, mapAsaasStatus } from '../../shared/asaas.ts';
 import { secrets } from 'base44:runtime';
+import {
+  asaasEventKey,
+  applyAsaasReceiptUnchecked,
+  sumCompensatedCheques,
+} from '../../shared/operationAccounting.js';
 
 // Sincroniza o status dos títulos (Cheque) vinculados à operação conforme o estado da operação.
 // - 'compensado' quando a operação é quitada/finalizada (paga)
 // - 'cancelado' quando a operação é rejeitada/cancelada
 // - 'pendente' quando a operação é reaberta
+//
+// D1.1: marcar um título como compensado NÃO é um recebimento. Depois de mudar os
+// status, o marcador `cheques_compensados_total` é ABSORVIDO (avança sem tocar em
+// amount_paid), para que a próxima sincronização de cheques não volte a somar
+// esses títulos — era essa a dupla contagem.
 async function syncTitulosByOperacaoStatus(base44, operationId, targetStatus) {
   if (!operationId || !targetStatus) return;
   const cheques = await base44.asServiceRole.entities.Cheque.filter({ operation_id: operationId });
@@ -17,6 +27,26 @@ async function syncTitulosByOperacaoStatus(base44, operationId, targetStatus) {
   await base44.asServiceRole.entities.Cheque.bulkUpdate(
     toUpdate.map((c) => ({ id: c.id, status: targetStatus }))
   );
+
+  const after = await base44.asServiceRole.entities.Cheque.filter({ operation_id: operationId });
+  await base44.asServiceRole.entities.Operation.update(operationId, {
+    cheques_compensados_total: sumCompensatedCheques(after),
+  });
+}
+
+/**
+ * Reivindica a identidade de um RECEBIMENTO Asaas por compare-and-swap.
+ * Só quem consegue gravar a chave (updated === 1) contabiliza o valor; uma
+ * reentrega do mesmo webhook encontra a chave e não altera nada.
+ */
+async function claimAsaasEvent(base44, operationId, paymentId) {
+  const key = asaasEventKey(paymentId);
+  if (!key || !operationId) return false;
+  const res = await base44.asServiceRole.entities.Operation.updateMany(
+    { id: operationId, asaas_eventos_processados: { $ne: key } },
+    { $push: { asaas_eventos_processados: key } }
+  );
+  return !!res && res.updated === 1;
 }
 
 Deno.serve(async (req) => {
@@ -82,17 +112,22 @@ Deno.serve(async (req) => {
       if (payment.subscriptionStatus) updateData.asaas_status = payment.subscriptionStatus;
       if (payment.nextDueDate) updateData.proxima_cobranca = payment.nextDueDate;
 
-      if (isReceived && !isDeleted) {
+      // D1.1 — idempotência: o evento é reivindicado UMA vez. Reentrega do mesmo
+      // pagamento não volta a amortizar a operação nem a incrementar os ciclos.
+      const claimed = isReceived && !isDeleted && operation
+        ? await claimAsaasEvent(base44, operation.id, paymentId)
+        : false;
+
+      if (isReceived && !isDeleted && claimed) {
         const newCiclosPagos = (vinculo.ciclos_pagos || 0) + 1;
         updateData.ciclos_pagos = newCiclosPagos;
 
         // Amortiza a operação
         if (operation) {
-          const newAmountPaid = (operation.amount_paid || 0) + receivedValue;
-          const totalRec = operation.total_receivable || 0;
-          const newBalance = totalRec > 0 ? Math.max(0, totalRec - newAmountPaid) : 0;
-          const opUpdate = { amount_paid: newAmountPaid, balance_due: newBalance };
-          if (totalRec > 0 && newBalance <= 0.01) opUpdate.status = 'quitado';
+          const fresh = await base44.asServiceRole.entities.Operation.get(operation.id);
+          const next = applyAsaasReceiptUnchecked(fresh, receivedValue);
+          const opUpdate = { amount_paid: next.amount_paid, balance_due: next.balance_due };
+          if (next.status) opUpdate.status = next.status;
           await base44.asServiceRole.entities.Operation.update(operation.id, opUpdate);
 
           // Crédito na conta corrente do cedente
@@ -164,15 +199,20 @@ Deno.serve(async (req) => {
             inst.asaas_payment_status = status;
           }
 
-          if (isReceived && !isDeleted) {
+          // D1.1 — idempotência por evento (ver claimAsaasEvent).
+          const claimed = isReceived && !isDeleted
+            ? await claimAsaasEvent(base44, operationId, paymentId)
+            : false;
+
+          if (isReceived && !isDeleted && claimed) {
             inst.paid = true;
             inst.paid_date = today;
             inst.status = 'paga';
-            const newAmountPaid = (operation.amount_paid || 0) + receivedValue;
-            const newBalance = (operation.total_receivable || 0) - newAmountPaid;
-            updateData.amount_paid = newAmountPaid;
-            updateData.balance_due = Math.max(0, newBalance);
-            if (newBalance <= 0.01) updateData.status = 'quitado';
+            const fresh = await base44.asServiceRole.entities.Operation.get(operationId);
+            const next = applyAsaasReceiptUnchecked(fresh, receivedValue);
+            updateData.amount_paid = next.amount_paid;
+            updateData.balance_due = next.balance_due;
+            if (next.status) updateData.status = next.status;
 
             if (operation.client_id) {
               const numOp = operation.numero_operacao
@@ -240,12 +280,17 @@ Deno.serve(async (req) => {
       const operation = await base44.asServiceRole.entities.Operation.get(operationId);
       if (operation) {
         const updateData = { asaas_payment_status: status };
-        if (isReceived) {
-          const newAmountPaid = (operation.amount_paid || 0) + receivedValue;
-          const newBalance = (operation.total_receivable || 0) - newAmountPaid;
-          updateData.amount_paid = newAmountPaid;
-          updateData.balance_due = Math.max(0, newBalance);
-          updateData.status = newBalance <= 0.01 ? 'quitado' : operation.status;
+
+        // D1.1 — idempotência por evento (ver claimAsaasEvent).
+        const claimed = isReceived
+          ? await claimAsaasEvent(base44, operationId, paymentId)
+          : false;
+
+        if (isReceived && claimed) {
+          const next = applyAsaasReceiptUnchecked(operation, receivedValue);
+          updateData.amount_paid = next.amount_paid;
+          updateData.balance_due = next.balance_due;
+          updateData.status = next.status || operation.status;
         } else if (status === 'overdue') {
           updateData.status = 'atrasado';
         }
@@ -255,7 +300,7 @@ Deno.serve(async (req) => {
         }
 
         // Launch credit on conta corrente if received
-        if (isReceived && operation.client_id) {
+        if (isReceived && claimed && operation.client_id) {
           const numOp = operation.numero_operacao
             ? String(operation.numero_operacao).padStart(6, '0')
             : '';

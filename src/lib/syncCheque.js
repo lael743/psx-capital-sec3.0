@@ -148,4 +148,12 @@ export async function syncTitulosByOperacaoStatus(op) {
   await base44.entities.Cheque.bulkUpdate(
     toUpdate.map((c) => ({ id: c.id, status: targetStatus }))
   );
+
+  // D1.1 — marcar um título como compensado NÃO é um recebimento. Absorve o
+  // conjunto no marcador, SEM tocar em amount_paid, para que a próxima
+  // sincronização de cheques não volte a somar esses títulos.
+  const after = await base44.entities.Cheque.filter({ operation_id: op.id });
+  await base44.entities.Operation.update(op.id, {
+    cheques_compensados_total: sumCompensated(after),
+  });
 }

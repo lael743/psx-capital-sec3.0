@@ -304,6 +304,7 @@ export default function OperacaoForm() {
       installment_schedule: [],
       balance_due: totalReceivable || valorAntecipacao,
       amount_paid: 0,
+      cheques_compensados_total: 0,
       status: 'ativo',
       assinatura_ciclo: form.assinatura_ciclo || 'MONTHLY',
       assinatura_prazo_tipo: prazoTipo,
@@ -442,6 +443,7 @@ export default function OperacaoForm() {
       installment_schedule: installmentSchedule,
       balance_due: totalReceivable,
       amount_paid: 0,
+      cheques_compensados_total: 0,
       status: 'ativo',
       notes: form.notes || '',
     };
