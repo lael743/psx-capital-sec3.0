@@ -40,6 +40,19 @@ import {
 const lista = (res) => (Array.isArray(res) ? res : (res && res.items) || []);
 
 /**
+ * Escolhe UM diário canônico quando a criação concorrente produziu mais de um.
+ *
+ * `create` não tem unicidade por chave, então dois pedidos simultâneos do mesmo
+ * `transfer_id` podem criar dois diários. Se cada execução reivindicasse no seu
+ * próprio documento, as duas venceriam o CAS e o lançamento duplicaria. Elegendo
+ * o de menor id, ambas as execuções disputam o MESMO documento — e só uma
+ * vence. A escolha é arbitrária, mas estável.
+ */
+function canonico(docs) {
+  return [...docs].sort((a, b) => String(a.id).localeCompare(String(b.id)))[0] || null;
+}
+
+/**
  * @param {Object} p
  * @param {{updateWhere:Function}} p.bancoStore
  * @param {{filter:Function, create:Function, updateWhere:Function}} p.diarioStore
@@ -50,14 +63,14 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
   const relogio = agora || (() => new Date().toISOString());
 
   async function diarioExistente(transferId) {
-    return lista(await diarioStore.filter({ transfer_id: transferId }))[0] || null;
+    return canonico(lista(await diarioStore.filter({ transfer_id: transferId })));
   }
 
   async function garantirDiario({ transferId, fromBank, toBank, amount, date, description, userEmail, estornoDe }) {
     const existente = await diarioExistente(transferId);
     if (existente) return existente;
 
-    return diarioStore.create({
+    await diarioStore.create({
       transfer_id: transferId,
       from_bank_id: fromBank.id,
       from_bank_name: fromBank.name || fromBank.nome || '',
@@ -72,25 +85,28 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
       requested_by: userEmail || '',
       estorno_de: estornoDe || '',
     });
+
+    // Relê para eleger o canônico — a criação concorrente pode ter duplicado.
+    return diarioExistente(transferId);
   }
 
   /** Escrita pontual na perna — nunca regrava o objeto `legs` inteiro. */
-  async function marcarPerna(transferId, leg, patch) {
+  async function marcarPerna(diarioId, leg, patch) {
     const set = {};
     for (const [k, v] of Object.entries(patch)) set[`legs.${leg}.${k}`] = v;
-    await diarioStore.updateWhere({ transfer_id: transferId }, { $set: set });
+    await diarioStore.updateWhere({ id: diarioId }, { $set: set });
   }
 
   /**
    * Reivindica a criação do lançamento da perna. Só o vencedor cria.
    * A reivindicação expira: execução morta não bloqueia para sempre.
    */
-  async function reivindicarLancamento(transferId, leg) {
+  async function reivindicarLancamento(diarioId, leg) {
     const instante = relogio();
     const limite = new Date(new Date(instante).getTime() - TTL_REIVINDICACAO_MS).toISOString();
     const res = await diarioStore.updateWhere(
       {
-        transfer_id: transferId,
+        id: diarioId,
         [`legs.${leg}.cashflow_id`]: { $exists: false },
         $or: [
           { [`legs.${leg}.cf_claimed_at`]: { $exists: false } },
@@ -102,13 +118,13 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
     return (Number(res && res.updated) || 0) > 0;
   }
 
-  async function garantirLancamento({ transferId, perna, amount, date, description, fromName, toName }) {
+  async function garantirLancamento({ diarioId, transferId, perna, amount, date, description, fromName, toName }) {
     const origem = { source_type: SOURCE_TRANSFERENCIA, source_id: perna.sourceId };
 
     const existentes = lista(await cashflowStore.filter(origem));
     if (existentes.length > 0) return { status: 'existente', id: existentes[0].id };
 
-    if (!(await reivindicarLancamento(transferId, perna.leg))) {
+    if (!(await reivindicarLancamento(diarioId, perna.leg))) {
       const relidos = lista(await cashflowStore.filter(origem));
       return relidos.length > 0
         ? { status: 'existente', id: relidos[0].id }
@@ -156,6 +172,8 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
     const pernas = planoDePernas({ transferId: id, fromBankId: fromBank.id, toBankId: toBank.id, amount: valor });
     const resultados = [];
 
+    const diarioId = diario.id;
+
     for (const perna of pernas) {
       // 1. Saldo: atômico e idempotente pela chave do evento.
       const efeito = await applyBankDelta({
@@ -164,13 +182,13 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
         delta: perna.delta,
         eventKey: perna.key,
       });
-      await marcarPerna(id, perna.leg, { banco: efeito.status, aplicada_em: relogio() });
+      await marcarPerna(diarioId, perna.leg, { banco: efeito.status, aplicada_em: relogio() });
 
       // 2. Lançamento: idempotente pela origem, reivindicado por CAS.
       const lanc = await garantirLancamento({
-        transferId: id, perna, amount: valor, date, description: desc, fromName, toName,
+        diarioId, transferId: id, perna, amount: valor, date, description: desc, fromName, toName,
       });
-      if (lanc.id) await marcarPerna(id, perna.leg, { cashflow_id: lanc.id });
+      if (lanc.id) await marcarPerna(diarioId, perna.leg, { cashflow_id: lanc.id });
 
       resultados.push({ leg: perna.leg, banco: efeito.status, lancamento: lanc.status });
     }
@@ -179,7 +197,7 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
     const completo = aplicadas === 2 && resultados.every((r) => r.lancamento !== 'pendente');
     const status = completo ? 'aplicada' : 'parcial';
 
-    await diarioStore.updateWhere({ transfer_id: id }, { $set: { status }, $inc: { attempts: 1 } });
+    await diarioStore.updateWhere({ id: diarioId }, { $set: { status }, $inc: { attempts: 1 } });
 
     return { status, transferId: id, pernas: resultados };
   }
@@ -201,7 +219,7 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
     const fromName = original.from_bank_name || 'origem';
     const toName = original.to_bank_name || 'destino';
 
-    await garantirDiario({
+    const estornoDoc = await garantirDiario({
       transferId: estornoId,
       fromBank: { id: original.from_bank_id, name: fromName },
       toBank: { id: original.to_bank_id, name: toName },
@@ -228,6 +246,7 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
         eventKey: perna.key,
       });
       const lanc = await garantirLancamento({
+        diarioId: estornoDoc.id,
         transferId: estornoId,
         perna,
         amount: valor,
@@ -236,16 +255,16 @@ export function criarMotor({ bancoStore, diarioStore, cashflowStore, agora }) {
         fromName,
         toName,
       });
-      if (lanc.id) await marcarPerna(estornoId, perna.leg, { cashflow_id: lanc.id, banco: efeito.status });
+      if (lanc.id) await marcarPerna(estornoDoc.id, perna.leg, { cashflow_id: lanc.id, banco: efeito.status });
       resultados.push({ leg: perna.leg, banco: efeito.status, lancamento: lanc.status });
     }
 
     await diarioStore.updateWhere(
-      { transfer_id: estornoId },
+      { id: estornoDoc.id },
       { $set: { status: 'aplicada' }, $inc: { attempts: 1 } }
     );
     await diarioStore.updateWhere(
-      { transfer_id: original.transfer_id },
+      { id: original.id },
       { $set: { status: 'estornada', estornada_por: estornoId } }
     );
 

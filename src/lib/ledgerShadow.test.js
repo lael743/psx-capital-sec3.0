@@ -113,7 +113,10 @@ test('D2.7 — transferência completa não infla o consolidado', () => {
   assert.equal(r.contas[1].saldo_calculado, 400);
 });
 
-test('D2.8 — transferência incompleta é detectada (perna órfã)', () => {
+test('D2.8 — perna órfã é detectada como incompleta (sem pareamento por valor/data)', () => {
+  // A D3 proíbe parear transferências históricas por valor + data. Uma perna
+  // sem `transfer_id` não é pareada com nada: ela é "sem identificador" e,
+  // como nunca pode ser provada completa, também conta como incompleta.
   const lanc = [
     cf({ id: 't1', amount: 400, type: 'saida', category: 'transferencia_interna', bank_id: 'b1' }),
   ];
@@ -123,8 +126,9 @@ test('D2.8 — transferência incompleta é detectada (perna órfã)', () => {
     dataBase: '2026-12-31',
   });
   assert.equal(rel.resumo.transferencias_incompletas, 1);
-  assert.equal(rel.anomalias.transferencias_incompletas[0].saidas, 1);
-  assert.equal(rel.anomalias.transferencias_incompletas[0].entradas, 0);
+  assert.equal(rel.resumo.transferencias_sem_identificador, 1);
+  assert.equal(rel.resumo.transferencias_completas, 0);
+  assert.equal(rel.anomalias.transferencias_incompletas[0].transfer_id, null);
 });
 
 test('D2.9 — transferência sem bank_id não é atribuível a nenhuma conta', () => {
