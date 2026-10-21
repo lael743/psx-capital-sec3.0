@@ -2,7 +2,7 @@ import { ArrowUpDown } from 'lucide-react';
 import { DataTable, TableHead, Th, TableBody, Tr, Td, EmptyRow } from '@/components/ui/DataTable';
 import SituacaoBadge from '@/components/contasReceber/SituacaoBadge';
 import CobrancaBadge from '@/components/contasReceber/CobrancaBadge';
-import { VINCULO_LABEL } from '@/lib/contasReceber';
+import { GRAU_LABEL } from '@/lib/contasReceber';
 import { formatCurrency, formatDate } from '@/lib/finance';
 
 function Valor({ valor }) {
@@ -13,11 +13,13 @@ function Valor({ valor }) {
 }
 
 function Motivos({ linha }) {
-  if (!linha.motivos || linha.motivos.length === 0) return null;
+  const motivos = linha.motivos || [];
+  if (motivos.length === 0) return null;
+  const cor = linha.inconsistente ? 'text-red-600' : 'text-amber-600';
   return (
-    <span className="block mt-1 text-[11px] leading-tight text-red-600 max-w-[190px] truncate" title={linha.motivos.join(' · ')}>
-      {linha.motivos[0]}
-      {linha.motivos.length > 1 && ` +${linha.motivos.length - 1}`}
+    <span className={`block mt-1 text-[11px] leading-tight ${cor} max-w-[190px] truncate`} title={motivos.join(' · ')}>
+      {motivos[0]}
+      {motivos.length > 1 && ` +${motivos.length - 1}`}
     </span>
   );
 }
@@ -65,7 +67,12 @@ export default function TitulosTable({ linhas, ordem, onOrdenar }) {
             <Td className="hidden xl:table-cell"><CobrancaBadge cobranca={linha.cobranca} /></Td>
             <Td muted className="hidden md:table-cell text-[11px] whitespace-nowrap">
               {linha.origem_label}
-              {linha.vinculo && <span className="block text-muted-foreground/80">{VINCULO_LABEL[linha.vinculo]}</span>}
+              <span className="block text-muted-foreground/80">{GRAU_LABEL[linha.grau_vinculo] || 'sem vínculo'}</span>
+              {linha.evidencia_label && (
+                <span className="block text-muted-foreground/70" title="Evidência de recebimento conferida no núcleo financeiro">
+                  {linha.evidencia_label}
+                </span>
+              )}
             </Td>
             <Td right className="hidden xl:table-cell whitespace-nowrap" title="Saldo agregado da operação — não é saldo individual do título">
               {linha.saldo_operacao === null ? (

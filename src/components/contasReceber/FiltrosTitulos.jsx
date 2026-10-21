@@ -23,7 +23,7 @@ export default function FiltrosTitulos({ filtros, onChange, opcoes, ordem, onOrd
           <option value="">Todas as situações</option>
           {Object.entries(SITUACAO_LABEL).map(([chave, label]) => (
             <option key={chave} value={chave}>
-              {chave === SITUACAO.INCONSISTENTE ? `${label} (inclui conciliação pendente)` : label}
+              {chave === SITUACAO.INCONSISTENTE ? `${label} (contradição comprovada)` : label}
             </option>
           ))}
         </select>
