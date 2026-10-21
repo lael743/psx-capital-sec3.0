@@ -36,15 +36,22 @@ export default function WorkflowActions({ operacao, onUpdate }) {
     setAvisos([]);
     // A etapa que ESTA tela viu acompanha o pedido: se a operação já mudou, o
     // servidor recusa em vez de avançar uma segunda etapa num retry.
-    const resposta = await transicionarOperacao({
-      operacaoId: operacao.id,
-      acao,
-      motivo: motivoInformado,
-      etapaObservada: operacao.etapa || 'nova',
-    });
-    setLoading(false);
+    let resposta;
+    try {
+      resposta = await transicionarOperacao({
+        operacaoId: operacao.id,
+        acao,
+        motivo: motivoInformado,
+        etapaObservada: operacao.etapa || 'nova',
+      });
+    } finally {
+      setLoading(false);
+    }
     if (!resposta.ok) {
       setErro(resposta.erro || 'Transição não permitida.');
+      // A recusa pode ser "a operação já está em outra etapa": recarrega para a
+      // tela mostrar a etapa real em vez de repetir o mesmo pedido.
+      if (resposta.etapa && resposta.etapa !== (operacao.etapa || 'nova')) onUpdate?.();
       return;
     }
     setAvisos(Array.isArray(resposta.avisos) ? resposta.avisos : []);
