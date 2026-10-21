@@ -1,5 +1,6 @@
 import { formatCurrency, today } from '@/lib/finance';
 import { calcTitulosTotais } from '@/components/operacao/wizard/TituloInlineTable';
+import { calcModeEfetivo } from '@/lib/formatosCalculo';
 
 const STORAGE_KEY = 'psx_company_settings';
 function getSettings() {
@@ -23,7 +24,7 @@ export default function OperacaoResumoSidebar({ operacao, cheques = [] }) {
     outras_despesas: String(c.outras_despesas || 0),
   }));
 
-  const calcMode = isEmprestimo ? 'emprestimo' : (operacao.calc_mode || 'inverso');
+  const calcMode = calcModeEfetivo({ tipo: operacao.type, calcMode: operacao.calc_mode, calculoInverso: operacao.calculo_inverso });
   const totals = calcTitulosTotais(titulos, startDate, rate, interestType, floatDias, arredondar, calcMode);
   const tarifaOperacao = operacao.tarifa_operacao || 0;
   const tarifaPorTitulo = operacao.tarifa_por_titulo || 0;

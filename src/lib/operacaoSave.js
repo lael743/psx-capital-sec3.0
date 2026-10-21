@@ -198,10 +198,11 @@ export function montarPayloadOperacao({ resumo, form, ctx, editando, numeroOpera
     type: ctx.opType,
     produto: form.produto,
     produto_id: form.produto_id || undefined,
-    // Grava o formato REALMENTE usado no cálculo (não o "desejado"): é o que
-    // torna a operação formalizada reproduzível para auditoria. Formatos que
-    // não são do usuário (motor de empréstimo) mantêm a chave de origem.
-    calc_mode: isFormatoNovo(ctx.calcModeEfetivo) ? normalizarCalcMode(ctx.calcModeEfetivo) : ctx.calcMode,
+    // Grava a ESCOLHA do usuário (formato + a opção de inversão ao lado). O
+    // formato efetivamente calculado é derivável por calcModeEfetivo e os
+    // valores já ficam congelados no registro; gravá-lo aqui fazia a operação
+    // reaberta perder a diferença entre "Padrão invertido" e "Inverso".
+    calc_mode: calcMode,
     calculo_inverso: form.calculo_inverso || false,
     rate: resumo.rate,
     interest_type: form.interest_type,

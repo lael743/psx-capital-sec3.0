@@ -4,6 +4,7 @@ import { maskCpfCnpj } from '@/lib/masks';
 import {
   calcDesagioTitulo, calcTituloRow, calcTitulosTotais,
 } from '@/lib/operacaoCalc';
+import { DESAGIO_FACE, FACE_POR_REPASSE, PRICE, normalizarCalcMode } from '@/lib/formatosCalculo';
 
 // M4 — as fórmulas vivem em @/lib/operacaoCalc: a gravação e as telas de resumo
 // usam exatamente as mesmas funções, então cálculo e valor persistido não
@@ -51,12 +52,17 @@ export function calcTotalDistribuidoPerParcel(totalFace, totalTarifas, totalOutr
 }
 
 const CALCMODE_INFO = {
-  inverso: { inputLabel: 'Valor Face', inputPlaceholder: '0,00', calcLabel: 'Líquido', calcColor: 'text-emerald-600', hint: 'Digite o Valor de Face (total a receber). O líquido é calculado descontando o deságio.' },
-  padrao: { inputLabel: 'Valor Líquido', inputPlaceholder: '0,00', calcLabel: 'Face', calcColor: 'text-blue-600', hint: 'Digite o Valor Líquido (net a receber). O valor de face é calculado no sentido oposto.' },
-  desconto_direto: { inputLabel: 'Valor Líquido', inputPlaceholder: '0,00', calcLabel: 'Face', calcColor: 'text-blue-600', hint: 'Digite o Valor Líquido (net). O valor de face é calculado adicionando juros simples.' },
+  [DESAGIO_FACE]: { inputLabel: 'Valor Face', inputPlaceholder: '0,00', calcLabel: 'Líquido', calcColor: 'text-emerald-600', hint: 'Digite o valor de face (total a receber). O líquido sai descontando o deságio.' },
+  [FACE_POR_REPASSE]: { inputLabel: 'Repasse', inputPlaceholder: '0,00', calcLabel: 'Face', calcColor: 'text-blue-600', hint: 'Digite o repasse líquido desejado. O valor de face é calculado no sentido oposto.' },
+  [PRICE]: { inputLabel: 'Parcela', inputPlaceholder: '0,00', calcLabel: 'Líquido', calcColor: 'text-emerald-600', hint: 'Tabela Price: informe a parcela; o líquido vem da amortização do cronograma.' },
+  desconto_direto: { inputLabel: 'Valor Líquido', inputPlaceholder: '0,00', calcLabel: 'Face', calcColor: 'text-blue-600', hint: 'Formato legado: digite o líquido e o valor de face é calculado com juros simples.' },
+  emprestimo: { inputLabel: 'Parcela', inputPlaceholder: '0,00', calcLabel: 'Líquido', calcColor: 'text-emerald-600', hint: 'Empréstimo: informe a parcela; o líquido vem do repasse distribuído.' },
 };
 
-export default function TituloInlineTable({ titulos, onChange, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = 'inverso' }) {
+/** Em que formatos a coluna calculada mostra o LÍQUIDO (nos demais, a face). */
+const MOSTRA_LIQUIDO = [DESAGIO_FACE, PRICE, 'emprestimo', 'capital_desagio'];
+
+export default function TituloInlineTable({ titulos, onChange, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = DESAGIO_FACE }) {
   const update = (idx, field, value) => {
     const next = titulos.map((t, i) => (i === idx ? { ...t, [field]: value } : t));
     onChange(next);
@@ -66,7 +72,9 @@ export default function TituloInlineTable({ titulos, onChange, startDate, rate, 
   const removeRow = (idx) => onChange(titulos.filter((_, i) => i !== idx));
 
   const totals = calcTitulosTotais(titulos, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode);
-  const info = CALCMODE_INFO[calcMode] || CALCMODE_INFO.inverso;
+  const modo = normalizarCalcMode(calcMode);
+  const info = CALCMODE_INFO[modo] || CALCMODE_INFO[DESAGIO_FACE];
+  const mostraLiquido = MOSTRA_LIQUIDO.includes(modo);
 
   const inputCls = 'w-full px-2 py-1.5 text-xs border border-border rounded-md bg-white focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent';
 
@@ -126,7 +134,7 @@ export default function TituloInlineTable({ titulos, onChange, startDate, rate, 
                       <input type="number" step="0.01" className={`${inputCls} text-right`} value={t.outras_despesas} onChange={(e) => update(idx, 'outras_despesas', e.target.value)} placeholder="0,00" />
                     </td>
                     <td className={`px-2 py-1.5 text-right ${info.calcColor} font-semibold tabular-nums`}>
-                      {calcMode === 'inverso' ? (liquido ? formatCurrency(liquido) : '—') : (valorFace ? formatCurrency(valorFace) : '—')}
+                      {mostraLiquido ? (liquido ? formatCurrency(liquido) : '—') : (valorFace ? formatCurrency(valorFace) : '—')}
                     </td>
                     <td className="px-2 py-1.5">
                       <button onClick={() => removeRow(idx)} className="p-1 rounded text-red-400 hover:bg-red-50 transition-colors">

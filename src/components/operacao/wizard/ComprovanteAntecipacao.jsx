@@ -1,6 +1,7 @@
 import { forwardRef } from 'react';
 import { formatCurrency, formatDate } from '@/lib/finance';
 import { calcTituloRow, calcTotalDistribuidoPerParcel, calcTotalDistribuidoTotal } from './TituloInlineTable';
+import { FACE_POR_REPASSE, calcModeEfetivo, labelCalcMode, normalizarCalcMode } from '@/lib/formatosCalculo';
 
 /**
  * Comprovante de Antecipação de Recebíveis — layout A4 para captura em imagem/PDF.
@@ -13,15 +14,13 @@ const ComprovanteAntecipacao = forwardRef(function ComprovanteAntecipacao(
   const today = new Date();
   const todayStr = today.toLocaleDateString('pt-BR');
   const docLabel = selectedClient?.document_type === 'CNPJ' ? 'CNPJ' : 'CPF';
-  const calcMode = form.calc_mode || 'inverso';
-  const isEmprestimo = form.tipo === 'emprestimo';
-  const effectiveCalcMode = isEmprestimo ? 'emprestimo' : (form.calculo_inverso ? 'padrao' : calcMode);
+  const effectiveCalcMode = calcModeEfetivo({ tipo: form.tipo, calcMode: form.calc_mode, calculoInverso: form.calculo_inverso });
   const rate = parseFloat(form.rate) || 0;
   const floatDias = parseFloat(form.float_dias) || 0;
   const isCheque = form.tipo === 'cheque';
   const tituloLabel = isCheque ? 'Cheque' : 'Parcela';
   const titulosLabel = isCheque ? 'Cheques' : 'Parcelas';
-  const isPadrao = effectiveCalcMode === 'padrao';
+  const isPadrao = normalizarCalcMode(effectiveCalcMode) === FACE_POR_REPASSE;
   const tarifaOperacaoComp = parseFloat(form.tarifa_operacao) || 0;
   const tarifaPorTituloComp = parseFloat(form.tarifa_por_titulo) || 0;
   const tarifaTitulosComp = tarifaPorTituloComp * titulos.length;
@@ -78,7 +77,7 @@ const ComprovanteAntecipacao = forwardRef(function ComprovanteAntecipacao(
         {/* Resumo da Operação */}
         <Section title="Resumo da Operação">
           <Row label="Produto" value={form.produto || '—'} />
-          <Row label="Formato de Cálculo" value={calcMode === 'inverso' ? 'Juros Embutido' : calcMode === 'padrao' ? 'Padrão' : calcMode === 'desconto_direto' ? 'Desconto Direto' : 'Capital + Deságio'} />
+          <Row label="Formato de Cálculo" value={labelCalcMode(effectiveCalcMode)} />
           <Row label="Data da Operação" value={formatDate(form.start_date)} />
           <Row label="Vencimento Final" value={lastDueDate ? formatDate(lastDueDate) : '—'} />
           <Row label={`Quantidade de ${titulosLabel}`} value={String(titulos.length)} />

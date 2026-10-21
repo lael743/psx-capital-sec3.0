@@ -27,7 +27,11 @@ const CALCMODE_INFO = {
 export default function StepParcelas({ form, setForm, titulos, setTitulos, calcMode }) {
   const inverseMode = form.calculo_inverso || false;
   const isEmprestimo = form.tipo === 'emprestimo';
-  const effectiveCalcMode = isEmprestimo ? 'emprestimo' : (inverseMode ? 'padrao' : calcMode);
+  const effectiveCalcMode = calcModeEfetivo({ tipo: form.tipo, calcMode, calculoInverso: inverseMode });
+  const isPrice = effectiveCalcMode === PRICE;
+  // Parcelado aceita duas entradas: repasse desejado (padrão) ou valor da parcela.
+  const [entradaPrice, setEntradaPrice] = useState('repasse');
+  const tipoTitulo = form.tipo === 'cheque' || form.tipo === 'duplicata' ? form.tipo : 'boleto';
 
   const handleToggleInverse = () => {
     setForm((f) => ({ ...f, calculo_inverso: !f.calculo_inverso }));
@@ -42,11 +46,13 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
 
   const rate = parseFloat(form.rate) || 0;
   const floatDias = parseFloat(form.float_dias) || 0;
-  const info = isEmprestimo
-    ? { totalLabel: 'Valor do Repasse', hint: 'Digite o valor do repasse (empréstimo). Todas as taxas e deságio são embutidos em parcelas iguais.' }
-    : inverseMode
-      ? { totalLabel: 'Valor Líquido Total', hint: 'Digite o valor líquido total. O valor de face é calculado somando o deságio: face = valor ÷ (1 − taxa × dias/30).' }
-      : CALCMODE_INFO[effectiveCalcMode] || CALCMODE_INFO.inverso;
+  const info = isPrice
+    ? (entradaPrice === 'parcela'
+      ? { totalLabel: 'Valor da Parcela', hint: 'Digite o valor de cada parcela. O repasse é o valor presente das parcelas, descontado pelas taxas de cada período.' }
+      : CALCMODE_INFO[PRICE])
+    : isEmprestimo
+      ? { totalLabel: 'Valor do Repasse', hint: 'Digite o valor do repasse (empréstimo). Todas as taxas e deságio são embutidos em parcelas iguais.' }
+      : CALCMODE_INFO[effectiveCalcMode] || CALCMODE_INFO[DESAGIO_FACE];
 
   // Initialize from existing titulos
   useEffect(() => {
@@ -78,6 +84,29 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
     const sacadoNome = form.sacado_name || '';
     const sacadoDoc = form.sacado_doc || '';
 
+    if (isPrice) {
+      const vencimentos = Array.from({ length: n }, (_, i) => {
+        const venc = addDays(firstDate, i * interval);
+        return { dias: daysBetween(form.start_date, venc), vencimento: venc };
+      });
+      const cronograma = entradaPrice === 'parcela'
+        ? cronogramaPricePorParcela({ valorParcela: total, taxaMensalPct: rate, interestType: form.interest_type, vencimentos }).parcelas
+        : cronogramaPrice({ repasse: total, taxaMensalPct: rate, interestType: form.interest_type, vencimentos });
+      if (!cronograma.length) return;
+      setTitulos(cronograma.map((r) => ({
+        tipo: tipoTitulo,
+        numero: `${r.numero}/${n}`,
+        nf: '',
+        sacado: sacadoNome,
+        sacado_doc: sacadoDoc,
+        vencimento: r.vencimento,
+        valor_face: String(r.valor),
+        valor_liquido: String(r.amortizacao),
+        outras_despesas: ''
+      })));
+      return;
+    }
+
     if (isEmprestimo) {
       // Empréstimo: deságio calculado por parcela (fórmula padrão), face distribuída igualmente
       const liquidoPorParcela = round2(total / n);
@@ -108,7 +137,7 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
 
     const valorPorParcela = round2(total / n);
     const newTitulos = Array.from({ length: n }, (_, i) => ({
-      tipo: form.tipo === 'cheque' ? 'cheque' : 'boleto',
+      tipo: tipoTitulo,
       numero: `${i + 1}/${n}`,
       nf: '',
       sacado: sacadoNome,
@@ -144,7 +173,8 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
         
       </div>
 
-      {/* Inverse mode toggle */}
+      {/* Inverse mode toggle — no Parcelado a inversão é a escolha da entrada */}
+      {!isPrice &&
       <label className="flex items-center gap-2.5 cursor-pointer select-none">
         <input
           type="checkbox"
@@ -157,9 +187,23 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
           
         </span>
       </label>
+      }
 
       {/* Configurator */}
       <div className="border border-border rounded-xl p-4 space-y-3 bg-gray-50/50">
+        {isPrice &&
+        <div className="flex items-center gap-2">
+            <span className="text-xs font-medium text-muted-foreground">Calcular a partir de</span>
+            <select
+            className="input-field py-1 text-xs w-auto"
+            value={entradaPrice}
+            onChange={(e) => setEntradaPrice(e.target.value)}>
+              <option value="repasse">Repasse solicitado</option>
+              <option value="parcela">Valor da parcela</option>
+            </select>
+            <span className="text-xs text-muted-foreground">{info.hint}</span>
+          </div>
+        }
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{info.totalLabel} *</label>
@@ -194,7 +238,7 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
                   <th className="px-3 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Parcela</th>
                   <th className="px-3 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Vencimento</th>
                   <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Dias</th>
-                  <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Valor</th>
+                  <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">{isPrice ? 'Parcela (Face)' : 'Valor'}</th>
                   <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Deságio</th>
                   <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Líquido</th>
                   <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Total Distrib.</th>

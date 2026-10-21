@@ -11,13 +11,7 @@ import ResumoAssinatura from './ResumoAssinatura';
 const STORAGE_KEY = 'psx_company_settings';
 const getSettings = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; } };
 
-const CALCMODE_LABEL = {
-  padrao: 'Padrão',
-  inverso: 'Juros Embutido',
-  desconto_direto: 'Desconto Direto',
-  capital_desagio: 'Capital + Deságio',
-  emprestimo: 'Empréstimo',
-};
+import { calcModeEfetivo, labelCalcMode } from '@/lib/formatosCalculo';
 
 export default function StepResumo({ form, setForm, selectedClient, titulos, documentos, onGerarPDF, onConfirm, saving }) {
   const comprovanteRef = useRef(null);
@@ -27,9 +21,7 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
   const floatDias = parseFloat(form.float_dias) || 0;
   const tarifaOperacao = parseFloat(form.tarifa_operacao) || 0;
   const tarifaPorTitulo = parseFloat(form.tarifa_por_titulo) || 0;
-  const calcMode = form.calc_mode || 'inverso';
-  const isEmprestimo = form.tipo === 'emprestimo';
-  const effectiveCalcMode = isEmprestimo ? 'emprestimo' : (form.calculo_inverso ? 'padrao' : calcMode);
+  const effectiveCalcMode = calcModeEfetivo({ tipo: form.tipo, calcMode: form.calc_mode, calculoInverso: form.calculo_inverso });
 
   // M4 — mesmo cálculo da gravação (operacaoCalc), não uma cópia.
   const resumo = resumoFinanceiro({ titulos, form, calcMode: effectiveCalcMode });
@@ -124,7 +116,7 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground shrink-0">Formato de Cálculo</span>
-                <span className="font-semibold text-right">{CALCMODE_LABEL[calcMode] || calcMode}</span>
+                <span className="font-semibold text-right">{labelCalcMode(effectiveCalcMode)}</span>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground shrink-0">Taxa Deságio</span>
