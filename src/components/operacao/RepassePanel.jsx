@@ -1,34 +1,44 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Banknote, Loader2, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Banknote, Loader2, ShieldCheck, AlertTriangle, Plus } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
 import { useAuth } from '@/lib/AuthContext';
 import { avaliarRepasse } from '@/lib/operationWorkflow';
 import { registrarRepasseOperacao } from '@/lib/repasseOps';
 import { formatCurrency } from '@/lib/finance';
 import RepasseRegistrado from './RepasseRegistrado';
+import RepasseLinhaForm from './RepasseLinhaForm';
 
 const hoje = () => new Date().toISOString().split('T')[0];
+const chave = () => Math.random().toString(36).slice(2, 10);
+const centavos = (v) => Math.round((Number(v) || 0) * 100) / 100;
+
+const novaLinha = (valor, bancoId = '', forma = 'pix') => ({
+  id: chave(),
+  bancoId,
+  forma,
+  valor: valor === '' ? '' : String(valor),
+  referencia: '',
+  comprovante: '',
+});
 
 /**
  * M7 — registro do repasse ao cedente, na etapa "pagamento".
  *
- * Os pré-requisitos vêm de `avaliarRepasse` (a MESMA regra que o servidor
- * aplica). A tela só mostra o formulário: quem autoriza, valida a data, debita
- * a conta e grava a prova é `executeOperationDisbursement`.
+ * Uma operação pode ser repassada por mais de uma conta e mais de uma forma:
+ * as linhas dividem o valor líquido e o servidor exige que a soma feche.
  */
 export default function RepassePanel({ operacao, onUpdate }) {
   const { user } = useAuth();
   const [bancos, setBancos] = useState([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
-  const [form, setForm] = useState({
-    bancoId: operacao.disbursement_bank_id || '',
-    data: hoje(),
-    referencia: '',
-    comprovante: '',
-    forma: operacao.disbursement_method || 'pix',
-    token: '',
-  });
+  const [data, setData] = useState(hoje());
+  const [token, setToken] = useState('');
+  const [linhas, setLinhas] = useState(() => [novaLinha(
+    centavos(operacao.net_value ?? operacao.gross_value ?? ''),
+    operacao.disbursement_bank_id || '',
+    operacao.disbursement_method || 'pix',
+  )]);
 
   useEffect(() => {
     base44.entities.Banco.list()
@@ -55,13 +65,28 @@ export default function RepassePanel({ operacao, onUpdate }) {
     );
   }
 
-  const banco = bancos.find((b) => b.id === form.bancoId);
-  const temReferencia = form.referencia.trim().length >= 3 || /^https?:\/\//i.test(form.comprovante.trim());
-  const podeEnviar = Boolean(banco) && form.token.trim().length > 0 && temReferencia && !salvando;
-  const valor = decisao.valor || 0;
+  const valorTotal = centavos(decisao.valor);
+  const distribuido = centavos(linhas.reduce((total, linha) => total + (Number(linha.valor) || 0), 0));
+  const restante = centavos(valorTotal - distribuido);
+  const linhasValidas = linhas.every((linha) => (
+    linha.bancoId
+    && Number(linha.valor) > 0
+    && (linha.referencia.trim().length >= 3 || /^https?:\/\//i.test(linha.comprovante.trim()))
+  ));
+  const podeEnviar = linhasValidas && Math.abs(restante) < 0.01 && token.trim().length > 0 && !salvando;
 
-  const alterar = (campo, valorCampo) => {
-    setForm((f) => ({ ...f, [campo]: valorCampo }));
+  const alterarLinha = (id, campo, valor) => {
+    setLinhas((lista) => lista.map((linha) => (linha.id === id ? { ...linha, [campo]: valor } : linha)));
+    setErro('');
+  };
+
+  const removerLinha = (id) => {
+    setLinhas((lista) => lista.filter((linha) => linha.id !== id));
+    setErro('');
+  };
+
+  const adicionarLinha = () => {
+    setLinhas((lista) => [...lista, novaLinha(restante > 0 ? restante : '')]);
     setErro('');
   };
 
@@ -72,13 +97,9 @@ export default function RepassePanel({ operacao, onUpdate }) {
     try {
       await registrarRepasseOperacao({
         operacaoId: operacao.id,
-        bancoId: banco.id,
-        bancoNome: banco.name,
-        data: form.data,
-        referencia: form.referencia.trim(),
-        comprovanteUrl: form.comprovante.trim(),
-        forma: form.forma,
-        assessorToken: form.token.trim(),
+        data,
+        linhas,
+        assessorToken: token.trim(),
       });
       setSalvando(false);
       onUpdate?.();
@@ -97,71 +118,65 @@ export default function RepassePanel({ operacao, onUpdate }) {
         <div>
           <h3 className="text-sm font-bold">Registrar repasse ao cedente</h3>
           <p className="text-xs text-muted-foreground">
-            Debita a conta de origem, lança no fluxo de caixa e libera a finalização da operação.
+            Pode sair por várias contas e várias formas. Debita as contas, lança no fluxo de caixa e libera a finalização.
           </p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Valor (R$)</label>
-          <div className="input-field bg-gray-100 font-bold tabular-nums">{formatCurrency(valor)}</div>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">Valor a repassar</label>
+          <div className="input-field bg-gray-100 font-bold tabular-nums">{formatCurrency(valorTotal)}</div>
         </div>
         <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Conta de origem *</label>
-          <select className="input-field" value={form.bancoId} onChange={(e) => alterar('bancoId', e.target.value)}>
-            <option value="">Selecione...</option>
-            {bancos.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-          </select>
-          {banco && (
-            <p className="text-[10px] text-muted-foreground mt-1">
-              Ag: {banco.agency || '—'} · Conta: {banco.account || '—'} · Saldo: {formatCurrency(banco.current_balance || 0)}
-            </p>
-          )}
+          <label className="block text-xs font-medium text-muted-foreground mb-1">Distribuído</label>
+          <div className="input-field bg-gray-100 font-bold tabular-nums">{formatCurrency(distribuido)}</div>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-muted-foreground mb-1">Restante</label>
+          <div className={`input-field bg-gray-100 font-bold tabular-nums ${Math.abs(restante) < 0.01 ? 'text-emerald-700' : 'text-amber-700'}`}>
+            {formatCurrency(restante)}
+          </div>
         </div>
         <div>
           <label className="block text-xs font-medium text-muted-foreground mb-1">Data do repasse *</label>
-          <input className="input-field" type="date" max={hoje()} value={form.data} onChange={(e) => alterar('data', e.target.value)} />
+          <input className="input-field" type="date" max={hoje()} value={data} onChange={(e) => setData(e.target.value)} />
         </div>
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Forma</label>
-          <select className="input-field" value={form.forma} onChange={(e) => alterar('forma', e.target.value)}>
-            <option value="pix">PIX</option>
-            <option value="ted">TED/Transferência</option>
-            <option value="cheque">Cheque</option>
-            <option value="dinheiro">Dinheiro</option>
-          </select>
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Referência da transferência *</label>
-          <input
-            className="input-field"
-            value={form.referencia}
-            onChange={(e) => alterar('referencia', e.target.value)}
-            placeholder="ID PIX/TED ou nº do comprovante"
+      </div>
+
+      <div className="space-y-2">
+        {linhas.map((linha, indice) => (
+          <RepasseLinhaForm
+            key={linha.id}
+            linha={linha}
+            indice={indice}
+            bancos={bancos}
+            onChange={alterarLinha}
+            onRemove={removerLinha}
+            podeRemover={linhas.length > 1}
           />
-        </div>
-        <div>
-          <label className="block text-xs font-medium text-muted-foreground mb-1">Comprovante (link)</label>
-          <input
-            className="input-field"
-            value={form.comprovante}
-            onChange={(e) => alterar('comprovante', e.target.value)}
-            placeholder="https://..."
-          />
-        </div>
-        <div className="md:col-span-3">
-          <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1">
-            <ShieldCheck className="w-3 h-3" /> Token de segurança do assessor *
-          </label>
-          <input
-            className="input-field"
-            type="password"
-            value={form.token}
-            onChange={(e) => alterar('token', e.target.value)}
-            placeholder="Token cadastrado em Assessores"
-          />
-        </div>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        onClick={adicionarLinha}
+        className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground transition-colors"
+      >
+        <Plus className="w-3.5 h-3.5" /> Adicionar outra conta ou forma
+      </button>
+
+      <div>
+        <label className="block text-xs font-medium text-muted-foreground mb-1 flex items-center gap-1">
+          <ShieldCheck className="w-3 h-3" /> Token de segurança do assessor *
+        </label>
+        <input
+          className="input-field"
+          type="password"
+          value={token}
+          onChange={(e) => { setToken(e.target.value); setErro(''); }}
+          placeholder="Token cadastrado em Assessores"
+        />
       </div>
 
       {erro && <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{erro}</p>}

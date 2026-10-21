@@ -48,15 +48,14 @@ export default async function (req) {
     try { body = (await req.json()) || {}; } catch (_) { body = {}; }
 
     const operacaoId = String(body.operation_id || body.operacaoId || '');
-    const bancoId = String(body.disbursement_bank_id || '');
-    const referencia = String(body.referencia || body.disbursement_reference || '').trim();
-    const comprovanteUrl = String(body.comprovante_url || body.disbursement_proof_url || '').trim();
-    const forma = String(body.forma || '');
     const dataInformada = String(body.data || '').trim();
     const assessorToken = String(body.assessor_token || '').trim();
+    const linhasBrutas = Array.isArray(body.linhas) ? body.linhas.filter(Boolean) : [];
 
     if (!operacaoId) return falha('operation_id é obrigatório.', 400);
-    if (!bancoId) return falha('Conta de origem do repasse é obrigatória.', 400);
+    if (!linhasBrutas.length && !String(body.disbursement_bank_id || '')) {
+      return falha('Informe ao menos uma conta de origem do repasse.', 400);
+    }
 
     const servico = base44.asServiceRole;
     const operacao = await servico.entities.Operation.get(operacaoId).catch(() => null);
@@ -103,19 +102,43 @@ export default async function (req) {
       return falha('Token de segurança inválido. Acesso negado.', 403);
     }
 
-    // 5. Dados do repasse validados no servidor.
-    const banco = await servico.entities.Banco.get(bancoId).catch(() => null);
-    if (!banco) return falha('Conta de origem do repasse não encontrada.', 404);
-
+    // 5. Dados do repasse validados no servidor: quantas linhas quiser, mas a
+    //    soma TEM de fechar o valor líquido da operação (o valor é do servidor).
     const valor = valorDoRepasse(operacao);
     if (!(valor > 0)) return falha('Operação sem valor líquido para repasse.', 409);
 
     const data = dataInformada || hojeISO();
     if (Number.isNaN(Date.parse(data))) return falha('Data do repasse inválida.', 400);
     if (data > hojeISO()) return falha('A data do repasse não pode ser futura.', 400);
-    if (referencia.length < 3 && !/^https?:\/\//i.test(comprovanteUrl)) {
-      return falha('Informe a referência da transferência ou o comprovante do repasse.', 400);
+
+    const linhas = (linhasBrutas.length ? linhasBrutas : [{
+      banco_id: body.disbursement_bank_id,
+      forma: body.forma,
+      valor,
+      referencia: body.referencia || body.disbursement_reference,
+      comprovante_url: body.comprovante_url || body.disbursement_proof_url,
+    }]).map((linha) => ({
+      banco_id: String(linha?.banco_id || linha?.bancoId || ''),
+      forma: String(linha?.forma || operacao.disbursement_method || '').trim(),
+      valor: Number(linha?.valor || 0),
+      referencia: String(linha?.referencia || '').trim(),
+      comprovante_url: String(linha?.comprovante_url || linha?.comprovanteUrl || '').trim(),
+    }));
+
+    if (linhas.some((linha) => !linha.banco_id)) return falha('Toda forma de repasse precisa de uma conta de origem.', 400);
+    if (linhas.some((linha) => !(linha.valor > 0))) return falha('Informe o valor de cada forma de repasse.', 400);
+
+    const soma = linhas.reduce((total, linha) => total + linha.valor, 0);
+    if (Math.abs(soma - valor) > 0.01) {
+      return falha(`A soma das formas de repasse (R$ ${soma.toFixed(2)}) precisa fechar o valor líquido da operação (R$ ${valor.toFixed(2)}).`, 400);
     }
+
+    const semReferencia = linhas.some((linha) => linha.referencia.length < 3 && !/^https?:\/\//i.test(linha.comprovante_url));
+    if (semReferencia) return falha('Informe a referência ou o comprovante de cada forma de repasse.', 400);
+
+    const contas = await Promise.all(linhas.map((linha) => servico.entities.Banco.get(linha.banco_id).catch(() => null)));
+    if (contas.some((conta) => !conta)) return falha('Conta de origem do repasse não encontrada.', 404);
+    const contaPrincipal = contas[0];
 
     // 6. Efeitos: saldo + lançamento no extrato + prova na operação.
     const resultado = await registrarRepasse({
@@ -123,12 +146,15 @@ export default async function (req) {
       cashflowStore: servico.entities.CashFlow,
       operacaoStore: servico.entities.Operation,
       operacao,
-      bancoId,
-      bancoNome: banco.name || String(body.disbursement_bank_name || ''),
+      linhas: linhas.map((linha, i) => ({
+        bancoId: linha.banco_id,
+        bancoNome: contas[i]?.name || '',
+        valor: linha.valor,
+        forma: linha.forma,
+        referencia: linha.referencia,
+        comprovanteUrl: linha.comprovante_url,
+      })),
       data,
-      referencia,
-      comprovanteUrl,
-      forma: forma || operacao.disbursement_method || '',
       autorizadoPor: assessor.name || '',
       dono: usuario.email,
     });
@@ -145,14 +171,21 @@ export default async function (req) {
         action: resultado.status === 'aplicado' ? 'execute_disbursement' : 'recuperar_disbursement',
         entity: 'Operation',
         entity_id: operacaoId,
-        description: `Repasse de R$ ${valor.toFixed(2)} para ${operacao.client_name || 'cedente'} via ${banco.name} — Op. ${numeroCurto(operacao)} — Ref: ${referencia || comprovanteUrl} — Autorizado por assessor: ${assessor.name}`,
+        description: `Repasse de R$ ${valor.toFixed(2)} para ${operacao.client_name || 'cedente'} em ${linhas.length} forma(s): ${linhas.map((linha, i) => `${contas[i]?.name || 'conta'} (${linha.forma || 'transferência'}) R$ ${linha.valor.toFixed(2)}`).join(' + ')} — Op. ${numeroCurto(operacao)} — Autorizado por assessor: ${assessor.name}`,
         after: {
           valor,
           data,
-          conta_id: bancoId,
-          conta: banco.name || null,
-          referencia: referencia || null,
-          comprovante_url: comprovanteUrl || null,
+          linhas: (resultado.linhas || []).map((linha) => ({
+            conta_id: linha.banco_id,
+            conta: linha.banco_nome || null,
+            forma: linha.forma || null,
+            valor: linha.valor,
+            referencia: linha.referencia || null,
+            comprovante_url: linha.comprovante_url || null,
+            lancamento_id: linha.lancamento_id || null,
+          })),
+          conta_id: contaPrincipal?.id || null,
+          conta: contaPrincipal?.name || null,
           assessor: assessor.name || null,
           assessor_email: assessor.user_email || null,
           lancamento_id: resultado.lancamento_id,
@@ -161,7 +194,7 @@ export default async function (req) {
       });
     }
 
-    const bancoAtual = await servico.entities.Banco.get(bancoId).catch(() => null);
+    const bancoAtual = await servico.entities.Banco.get(contaPrincipal?.id || linhas[0].banco_id).catch(() => null);
 
     return Response.json({
       ok: true,
@@ -169,10 +202,11 @@ export default async function (req) {
       duplicate: resultado.status === 'ja_aplicado',
       valor,
       data,
-      conta_id: bancoId,
-      conta: banco.name || null,
-      referencia: referencia || null,
-      comprovante_url: comprovanteUrl || null,
+      linhas: resultado.linhas || [],
+      conta_id: contaPrincipal?.id || null,
+      conta: contaPrincipal?.name || null,
+      referencia: resultado.referencia || null,
+      comprovante_url: resultado.comprovante_url || null,
       lancamento_id: resultado.lancamento_id,
       lancamento_pendente: resultado.lancamento_pendente === true,
       new_bank_balance: bancoAtual ? bancoAtual.current_balance ?? null : null,

@@ -277,6 +277,42 @@ test('M7.6 valor e forma do repasse vêm do documento da operação', () => {
   assert.equal(chaveRepasse('op-abc'), 'repasse_cliente:op-abc');
 });
 
+// ── M7.10 — repasse em várias contas e formas ───────────────────────────────
+test('M7.10 repasse dividido em duas contas e formas debita cada conta e lança uma vez por linha', async () => {
+  const env = await ambiente({ dados: { etapa: 'pagamento' } });
+  await env.Banco.create({ id: 'b2', name: 'Conta PSX 2', current_balance: 10000, applied_ledger_keys: [], ledger_claims: [] });
+
+  const pedido = {
+    bancoStore: env.Banco,
+    cashflowStore: env.CashFlow,
+    operacaoStore: env.Operation,
+    operacao: env.op,
+    data: '2026-10-20',
+    linhas: [
+      { bancoId: 'b1', bancoNome: 'Conta PSX', valor: 600, forma: 'pix', referencia: 'PIX-1' },
+      { bancoId: 'b2', bancoNome: 'Conta PSX 2', valor: 400, forma: 'ted', referencia: 'TED-2' },
+    ],
+  };
+
+  const resultado = await registrarRepasse(pedido);
+  assert.equal(resultado.status, 'aplicado');
+  assert.equal(resultado.valor, 1000);
+  assert.equal(resultado.linhas.length, 2);
+
+  assert.equal(env.Banco.achar('b1').current_balance, 49400);
+  assert.equal(env.Banco.achar('b2').current_balance, 9600);
+  assert.equal(env.CashFlow.docs.length, 2, 'uma linha = um lançamento');
+  assert.equal(env.CashFlow.docs[1].method, 'transferencia');
+  assert.equal(env.Operation.achar(env.op.id).payment_executed, true);
+
+  // Repetir o mesmo repasse não debita nem lança de novo.
+  const repetido = await registrarRepasse(pedido);
+  assert.equal(repetido.status, 'ja_aplicado');
+  assert.equal(env.Banco.achar('b1').current_balance, 49400);
+  assert.equal(env.Banco.achar('b2').current_balance, 9600);
+  assert.equal(env.CashFlow.docs.length, 2);
+});
+
 // ── M7.7 — caminho próprio da assinatura + regressão dos títulos ────────────
 test('M7.7 assinatura passa em confirmação de títulos com antecipação e assinante; título continua exigido nos demais', () => {
   const assinatura = operacao({

@@ -3,29 +3,23 @@ import { base44 } from '@/api/base44Client';
 /**
  * M7 — adaptador do navegador para o repasse ao cedente.
  *
- * A tela não decide nada: envia a intenção e o servidor autoriza, valida e
+ * A tela não decide nada: envia a intenção (uma ou várias formas de repasse) e
+ * o servidor autoriza, valida a soma contra o valor líquido da operação e
  * aplica. Se a função recusar, nada é movimentado.
  */
-export async function registrarRepasseOperacao({
-  operacaoId,
-  bancoId,
-  bancoNome,
-  data,
-  referencia,
-  comprovanteUrl,
-  forma,
-  assessorToken,
-}) {
+export async function registrarRepasseOperacao({ operacaoId, data, linhas, assessorToken }) {
   try {
     const res = await base44.functions.invoke('executeOperationDisbursement', {
       operation_id: operacaoId,
-      disbursement_bank_id: bancoId,
-      disbursement_bank_name: bancoNome,
       data,
-      referencia,
-      comprovante_url: comprovanteUrl,
-      forma,
       assessor_token: assessorToken,
+      linhas: (linhas || []).map((linha) => ({
+        banco_id: linha.bancoId,
+        forma: linha.forma,
+        valor: Number(linha.valor) || 0,
+        referencia: linha.referencia,
+        comprovante_url: linha.comprovante,
+      })),
     });
     const dados = res?.data || {};
     if (dados.ok === false) throw new Error(dados.erro || 'Não foi possível registrar o repasse.');

@@ -501,7 +501,8 @@ test('D3.21 — funções de recebimento e repasse gravam a conta no lançamento
   // intenção da asserção continua a mesma: o lançamento identifica a conta e o
   // saldo é aplicado por evento, nunca por leitura antiga sobrescrita.
   const repasse = leitura('../../base44/shared/disbursement.js');
-  assert.match(repasse, /bank_id: bancoId/);
+  // Cada linha do repasse (uma conta/forma) identifica a SUA conta de origem.
+  assert.match(repasse, /bank_id: linha\.bancoId/);
   assert.match(repasse, /applyBankDelta/);
   assert.doesNotMatch(repasse, /current_balance: newBalance/);
 

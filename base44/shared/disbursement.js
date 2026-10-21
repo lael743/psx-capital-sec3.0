@@ -11,40 +11,35 @@
  *   prova  → `payment_executed` + data + conta + referência/comprovante na
  *            operação, gravados por compare-and-swap.
  *
+ * ── MAIS DE UMA FORMA DE REPASSAR ──────────────────────────────────────────
+ *
+ * Um único repasse pode sair por VÁRIAS contas e formas (parte por PIX de uma
+ * conta, parte por TED de outra, parte em dinheiro…). Cada linha é um evento
+ * próprio (`repasse_cliente:<operação>:<índice>`): debita a sua conta, cria o
+ * seu lançamento no extrato e nunca é confundida com a linha vizinha. O valor
+ * TOTAL continua vindo do documento da operação — as linhas apenas o dividem.
+ *
  * ── O QUE GARANTE (e como) ─────────────────────────────────────────────────
  *
- * 1. NENHUM REPASSE DUPLICADO. A chave do evento é determinística
- *    (`repasse_cliente:<id da operação>`): a segunda execução não casa a guarda
- *    `$ne` e recebe `ja_aplicado`. Isso vale inclusive para duas tentativas
- *    simultâneas — quem aplica o saldo é uma única escrita atômica.
+ * 1. NENHUM REPASSE DUPLICADO. A chave do evento é determinística por linha:
+ *    a segunda execução não casa a guarda `$ne` e recebe `ja_aplicado`.
  *
  * 2. LANÇAMENTO 1:1 COM O SALDO. A criação do `CashFlow` é precedida por uma
  *    REIVINDICAÇÃO no documento do banco (`claimBankEvent`). Duas execuções que
  *    chegam juntas não criam dois lançamentos; e uma execução que morreu entre
  *    o saldo e o lançamento não deixa o evento preso — se a reivindicação
- *    existir e o lançamento não, o retorno diz `lancamento_pendente` em vez de
- *    inventar um segundo crédito.
+ *    existir e o lançamento não, o retorno diz `lancamento_pendente`.
  *
  * 3. A PROVA É DO SERVIDOR. O valor vem SEMPRE do documento da operação
  *    (`net_value`, com `gross_value` como legado) — nunca do corpo da
  *    requisição. A operação só é marcada com `payment_executed` por
- *    compare-and-swap (guarda `$ne: true`), então um retry não reescreve a
- *    prova com outra data, outra conta ou outra referência.
- *
- * ── O QUE ELE NÃO FAZ ──────────────────────────────────────────────────────
- *
- * Não autoriza ninguém (quem decide é `avaliarRepasse` na regra do workflow),
- * não valida token de assessor, não estorna e não mexe na etapa. Não existe
- * transação entre documentos na plataforma: se o processo morrer entre o saldo
- * e a operação, a próxima execução encontra o saldo aplicado e COMPLETA a prova
- * — jamais debita de novo.
+ *    compare-and-swap (guarda `$ne: true`).
  *
  * ── CÓPIA DUPLICADA ────────────────────────────────────────────────────────
  *
  * Existe em `src/lib/disbursement.js` (navegador/testes) e
  * `base44/shared/disbursement.js` (função de servidor). Idênticos exceto pelo
- * especificador do import do `bankLedger`; o teste M7.9 compara os bytes depois
- * de normalizar essa linha.
+ * especificador do import do `bankLedger`; o teste M7.9 compara os bytes.
  */
 import { applyBankDelta, claimBankEvent, chaveEvento } from './bankLedger.ts';
 
@@ -53,6 +48,16 @@ export const TIPO_EVENTO_REPASSE = 'repasse_cliente';
 /** Chave determinística do repasse de uma operação. */
 export function chaveRepasse(operationId) {
   return chaveEvento(TIPO_EVENTO_REPASSE, operationId);
+}
+
+/**
+ * Chave do evento de UMA linha do repasse. Com uma única linha a chave é a
+ * chave do repasse (compatível com os registros já existentes); com várias, o
+ * índice entra na chave para que cada conta/forma seja um evento próprio.
+ */
+export function chaveLinhaRepasse(operationId, indice, total) {
+  const base = chaveRepasse(operationId);
+  return Number(total) > 1 ? `${base}:${indice}` : base;
 }
 
 const numero = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -84,31 +89,34 @@ export function numeroCurto(operacao = {}) {
   return `#${String(operacao.id || '').slice(-6).toUpperCase()}`;
 }
 
+/** Aceita tanto a lista de linhas quanto o pedido antigo de linha única. */
+function normalizarLinhas({ linhas, bancoId, bancoNome, forma, referencia, comprovanteUrl, valor }) {
+  const recebidas = (Array.isArray(linhas) ? linhas : []).filter(Boolean);
+  if (recebidas.length === 0) {
+    return [{ bancoId, bancoNome, valor, forma, referencia, comprovanteUrl }];
+  }
+  return recebidas.map((linha) => ({
+    bancoId: String(linha.bancoId || linha.banco_id || ''),
+    bancoNome: String(linha.bancoNome || linha.banco_nome || ''),
+    valor: numero(linha.valor),
+    forma: String(linha.forma || forma || ''),
+    referencia: String(linha.referencia || '').trim(),
+    comprovanteUrl: String(linha.comprovanteUrl || linha.comprovante_url || '').trim(),
+  }));
+}
+
 /**
- * Registra o repasse. Idempotente por operação.
- *
- * @param {object} p
- * @param {object} p.bancoStore      store do Banco (`updateWhere`)
- * @param {object} p.cashflowStore   store do CashFlow (`filter`, `create`)
- * @param {object} p.operacaoStore   store da Operation (`updateWhere`)
- * @param {object} p.operacao        documento da operação (valor e prova)
- * @param {string} p.bancoId         conta de origem
- * @param {string} p.bancoNome
- * @param {string} p.data            data efetiva (ISO)
- * @param {string} [p.referencia]    referência da transferência
- * @param {string} [p.comprovanteUrl]
- * @param {string} [p.forma]         forma de desembolso
- * @param {string} [p.autorizadoPor] nome do assessor que autorizou
- * @param {string} [p.dono]          identificação de quem executa (reivindicação)
- * @returns {Promise<{status:string, evento:string, valor:number, lancamento_id:string|null, lancamento_pendente:boolean, operacao_atualizada:boolean, erro?:string}>}
+ * Registra o repasse ao cedente — uma ou várias formas de pagamento.
+ * Idempotente por linha e por operação.
  */
 export async function registrarRepasse({
   bancoStore,
   cashflowStore,
   operacaoStore,
   operacao,
-  bancoId,
-  bancoNome,
+  linhas = [],
+  bancoId = '',
+  bancoNome = '',
   data,
   referencia = '',
   comprovanteUrl = '',
@@ -116,52 +124,83 @@ export async function registrarRepasse({
   autorizadoPor = '',
   dono = '',
 }) {
-  const valor = valorDoRepasse(operacao);
-  const evento = chaveRepasse(operacao.id);
+  const alvo = valorDoRepasse(operacao);
+  const lista = normalizarLinhas({ linhas, bancoId, bancoNome, forma, referencia, comprovanteUrl, valor: alvo });
+  const total = lista.reduce((soma, linha) => soma + numero(linha.valor), 0);
+  const aplicados = [];
 
-  const efeito = await applyBankDelta({
-    store: bancoStore,
-    bankId: bancoId,
-    delta: -valor,
-    eventKey: evento,
-  });
+  for (let i = 0; i < lista.length; i += 1) {
+    const linha = lista[i];
+    const evento = chaveLinhaRepasse(operacao.id, i, lista.length);
+    const valor = numero(linha.valor);
+    const parcial = { ...aplicados };
 
-  if (efeito.status === 'sem_conta') {
-    return { status: 'sem_conta', evento, valor, erro: 'Conta de origem do repasse inválida.' };
-  }
-  if (efeito.status === 'sem_efeito') {
-    return { status: 'sem_efeito', evento, valor, erro: 'Operação sem valor líquido para repasse.' };
-  }
-
-  const existentes = await cashflowStore.filter({
-    source_type: TIPO_EVENTO_REPASSE,
-    source_id: operacao.id,
-  });
-  const lista = Array.isArray(existentes) ? existentes : (existentes && existentes.items) || [];
-  let lancamento = lista[0] || null;
-
-  if (!lancamento) {
-    const reivindicou = await claimBankEvent({
-      store: bancoStore,
-      bankId: bancoId,
-      claimKey: `claim:${evento}`,
-      owner: dono || autorizadoPor || 'repasse',
-    });
-    if (reivindicou) {
-      lancamento = await cashflowStore.create({
-        type: 'saida',
-        category: TIPO_EVENTO_REPASSE,
-        amount: valor,
-        date: data,
-        description: `Repasse ao cedente ${operacao.client_name || ''} — ${bancoNome} — Op. ${numeroCurto(operacao)}${referencia ? ` — Ref: ${referencia}` : ''}`,
-        operation_id: operacao.id,
-        bank_id: bancoId,
-        source_type: TIPO_EVENTO_REPASSE,
-        source_id: operacao.id,
-        method: metodoDoCaixa(forma),
-      });
+    if (!linha.bancoId) {
+      return { status: 'sem_conta', evento, valor: total, linhas: parcial, erro: 'Conta de origem do repasse inválida.' };
     }
+    if (!(valor > 0)) {
+      return { status: 'sem_efeito', evento, valor: total, linhas: parcial, erro: 'Forma de repasse com valor inválido.' };
+    }
+
+    const efeito = await applyBankDelta({
+      store: bancoStore,
+      bankId: linha.bancoId,
+      delta: -valor,
+      eventKey: evento,
+    });
+    if (efeito.status === 'sem_conta') {
+      return { status: 'sem_conta', evento, valor: total, linhas: parcial, erro: 'Conta de origem do repasse inválida.' };
+    }
+    if (efeito.status === 'sem_efeito') {
+      return { status: 'sem_efeito', evento, valor: total, linhas: parcial, erro: 'Forma de repasse com valor inválido.' };
+    }
+
+    const sourceId = lista.length > 1 ? `${operacao.id}:${i}` : operacao.id;
+    const existentes = await cashflowStore.filter({
+      source_type: TIPO_EVENTO_REPASSE,
+      source_id: sourceId,
+    });
+    const encontrados = Array.isArray(existentes) ? existentes : (existentes && existentes.items) || [];
+    let lancamento = encontrados[0] || null;
+
+    if (!lancamento) {
+      const reivindicou = await claimBankEvent({
+        store: bancoStore,
+        bankId: linha.bancoId,
+        claimKey: `claim:${evento}`,
+        owner: dono || autorizadoPor || 'repasse',
+      });
+      if (reivindicou) {
+        lancamento = await cashflowStore.create({
+          type: 'saida',
+          category: TIPO_EVENTO_REPASSE,
+          amount: valor,
+          date: data,
+          description: `Repasse ao cedente ${operacao.client_name || ''} — ${linha.bancoNome || 'conta'} — Op. ${numeroCurto(operacao)}${linha.referencia ? ` — Ref: ${linha.referencia}` : ''}`,
+          operation_id: operacao.id,
+          bank_id: linha.bancoId,
+          source_type: TIPO_EVENTO_REPASSE,
+          source_id: sourceId,
+          method: metodoDoCaixa(linha.forma),
+        });
+      }
+    }
+
+    aplicados.push({
+      evento,
+      banco_id: linha.bancoId,
+      banco_nome: linha.bancoNome || '',
+      valor,
+      forma: linha.forma || '',
+      referencia: linha.referencia || '',
+      comprovante_url: linha.comprovanteUrl || '',
+      lancamento_id: lancamento ? lancamento.id : null,
+      aplicado: efeito.status === 'aplicado',
+    });
   }
+
+  const principal = aplicados[0] || {};
+  const lancamentoPendente = aplicados.some((linha) => !linha.lancamento_id);
 
   // Prova na operação: compare-and-swap. Um retry não reescreve o que já existe.
   const atualizacao = await operacaoStore.updateWhere(
@@ -170,28 +209,32 @@ export async function registrarRepasse({
       $set: {
         payment_executed: true,
         payment_execution_date: data,
-        disbursement_bank_id: bancoId,
-        disbursement_bank_name: bancoNome,
-        disbursement_reference: referencia || '',
-        disbursement_proof_url: comprovanteUrl || '',
+        disbursement_bank_id: principal.banco_id || '',
+        disbursement_bank_name: principal.banco_nome || '',
+        disbursement_method: principal.forma || operacao.disbursement_method || '',
+        disbursement_reference: principal.referencia || '',
+        disbursement_proof_url: principal.comprovante_url || '',
         status: 'repasse_concluido',
         assessor: autorizadoPor || operacao.assessor || '',
       },
     },
   );
   const operacaoAtualizada = Number((atualizacao && atualizacao.updated) || 0) > 0;
+  const algumAplicado = aplicados.some((linha) => linha.aplicado);
 
   return {
-    status: efeito.status === 'aplicado' ? 'aplicado' : 'ja_aplicado',
-    evento,
-    valor,
+    status: algumAplicado ? 'aplicado' : 'ja_aplicado',
+    evento: chaveRepasse(operacao.id),
+    valor: total,
     data,
-    banco_id: bancoId,
-    banco_nome: bancoNome,
-    referencia,
-    comprovante_url: comprovanteUrl,
-    lancamento_id: lancamento ? lancamento.id : null,
-    lancamento_pendente: !lancamento,
+    linhas: aplicados,
+    lancamentos: aplicados.map((linha) => linha.lancamento_id).filter(Boolean),
+    lancamento_id: principal.lancamento_id || null,
+    lancamento_pendente: lancamentoPendente,
+    banco_id: principal.banco_id || '',
+    banco_nome: principal.banco_nome || '',
+    referencia: principal.referencia || '',
+    comprovante_url: principal.comprovante_url || '',
     operacao_atualizada: operacaoAtualizada,
   };
 }
