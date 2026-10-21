@@ -34,7 +34,14 @@ export default function WorkflowActions({ operacao, onUpdate }) {
     setLoading(true);
     setErro('');
     setAvisos([]);
-    const resposta = await transicionarOperacao({ operacaoId: operacao.id, acao, motivo: motivoInformado });
+    // A etapa que ESTA tela viu acompanha o pedido: se a operação já mudou, o
+    // servidor recusa em vez de avançar uma segunda etapa num retry.
+    const resposta = await transicionarOperacao({
+      operacaoId: operacao.id,
+      acao,
+      motivo: motivoInformado,
+      etapaObservada: operacao.etapa || 'nova',
+    });
     setLoading(false);
     if (!resposta.ok) {
       setErro(resposta.erro || 'Transição não permitida.');

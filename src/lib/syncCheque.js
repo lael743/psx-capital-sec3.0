@@ -13,6 +13,7 @@
  *   A alocação cheque↔parcela usa o VENCIMENTO (compensation_date).
  */
 import { base44 } from '@/api/base44Client';
+import { editarOperacaoCampos } from '@/lib/operacaoOps';
 import { sumCompensated } from '@/lib/chequeCore';
 import { sincronizarOperacao } from '@/lib/chequeWrite';
 

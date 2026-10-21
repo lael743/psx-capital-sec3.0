@@ -149,12 +149,21 @@ export async function salvarCondicionado(base44, operacaoId, amountPaidObservado
   // M5.1 — a escrita passou para o servidor (operacaoEditar): a guarda de
   // concorrência viaja como `onde` e o conflito volta como erro, traduzido aqui
   // para o mesmo `false` que os chamadores já tratam.
-  try {
-    await editarOperacaoCampos(operacaoId, payload, { amount_paid: Number(amountPaidObservado) || 0 });
-    return true;
-  } catch (_) {
-    return false;
+  const onde = { amount_paid: Number(amountPaidObservado) || 0 };
+
+  // Produção: a escrita é do servidor (operacaoEditar) e a guarda viaja como `onde`.
+  if (base44 && typeof base44.functions?.invoke === 'function') {
+    try {
+      const res = await base44.functions.invoke('operacaoEditar', { acao: 'editar', operacaoId, campos: payload, onde });
+      return res?.data?.ok !== false;
+    } catch (_) {
+      return false;
+    }
   }
+
+  // Banco simulado (testes): a MESMA guarda, aplicada pelo armazenamento em memória.
+  const res = await base44.entities.Operation.updateMany({ id: operacaoId, ...onde }, { $set: payload });
+  return !!res && res.updated === 1;
 }
 
 /**

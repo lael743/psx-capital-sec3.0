@@ -10,6 +10,7 @@ import ComprovanteRepassePreview from '@/components/contrato/ComprovanteRepasseP
 import { formatCurrency } from '@/lib/finance';
 import { numPorExtenso } from '@/lib/numPorExtenso';
 import { base44 } from '@/api/base44Client';
+import { editarOperacaoCampos } from '@/lib/operacaoOps';
 
 function gerarDocId() {
   return 'xxxx-xxxx-xxxx'.replace(/x/g, () => Math.random().toString(36)[2]);

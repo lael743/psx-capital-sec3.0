@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
+import { editarOperacaoCampos, criarOperacaoViaServidor } from '@/lib/operacaoOps';
 import { ViewModeProvider } from '@/lib/viewMode';
 import { ArrowLeft, ArrowRight, Save, FileText, AlertTriangle, X } from 'lucide-react';
 import { formatCurrency, today } from '@/lib/finance';
@@ -310,14 +311,14 @@ export default function OperacaoForm() {
           const bloqueio = await bloqueioEdicaoCompleta(base44, editId);
           if (bloqueio) { setSaveError(bloqueio); return; }
         }
-        await base44.entities.Operation.update(operationId, payload);
+        await editarOperacaoCampos(operationId, payload);
         await base44.entities.AssinaturaVinculo.deleteMany({ operation_id: operationId });
         await logAction({
           action: 'update', entity: 'Operation', entityId: operationId,
           description: `Operação de assinatura editada para ${selectedClient?.name} — ${numAssinantes} assinantes — ${formatCurrency(valorAntecipacao)} antecipado`
         });
       } else {
-        const created = await base44.entities.Operation.create(payload);
+        const created = await criarOperacaoViaServidor(payload);
         operationId = created.id;
         setCreatedId(operationId);
         await logAction({
@@ -428,7 +429,18 @@ export default function OperacaoForm() {
       const payload = montarPayloadOperacao({ resumo, form, ctx, editando: !!editId, numeroOperacao: numeroLocal });
       const desejados = montarTitulosCheque({ resumo, ctx, operationId });
 
-      resultado = await salvarOperacao(base44, { operacaoId: operationId, payload, desejados });
+      // M5.1 — a criação/edição da operação passa pela autoridade do servidor;
+      // títulos continuam no caminho injetado (testável) deste módulo.
+      resultado = await salvarOperacao({
+        entities: {
+          Operation: {
+            create: criarOperacaoViaServidor,
+            update: editarOperacaoCampos,
+            list: (...args) => base44.entities.Operation.list(...args),
+          },
+          Cheque: base44.entities.Cheque,
+        },
+      }, { operacaoId: operationId, payload, desejados });
       operationId = resultado.operationId;
       if (!editId) setCreatedId(operationId);
 
@@ -472,7 +484,7 @@ export default function OperacaoForm() {
           });
           sacadoId = created.id;
         }
-        await base44.entities.Operation.update(operationId, { sacado_id: sacadoId });
+        await editarOperacaoCampos(operationId, { sacado_id: sacadoId });
       } catch (e) {
         console.error('Erro ao vincular sacado:', e);
       }
