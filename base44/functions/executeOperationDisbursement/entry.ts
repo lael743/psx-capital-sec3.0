@@ -141,10 +141,21 @@ export default async function (req) {
     const contaPrincipal = contas[0];
 
     // 6. Efeitos: saldo + lançamento no extrato + prova na operação.
+    //    Os núcleos (bankLedger/disbursement) falam `updateWhere(query, update)`.
+    //    A entidade da plataforma expõe `updateMany` — o adaptador traduz.
+    const bancoStore = {
+      updateWhere: (query, update) => servico.entities.Banco.updateMany(query, update),
+      get: (id) => servico.entities.Banco.get(id),
+    };
+    const operacaoStore = {
+      updateWhere: (query, update) => servico.entities.Operation.updateMany(query, update),
+      get: (id) => servico.entities.Operation.get(id),
+    };
+
     const resultado = await registrarRepasse({
-      bancoStore: servico.entities.Banco,
+      bancoStore,
       cashflowStore: servico.entities.CashFlow,
-      operacaoStore: servico.entities.Operation,
+      operacaoStore,
       operacao,
       linhas: linhas.map((linha, i) => ({
         bancoId: linha.banco_id,
