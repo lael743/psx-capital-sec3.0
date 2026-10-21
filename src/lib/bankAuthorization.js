@@ -138,6 +138,7 @@ const OPERACIONAIS = Object.freeze([
   ACOES_BANCARIAS.DEVOLVER_CHEQUE,
   ACOES_BANCARIAS.RECEBER_PAGAMENTO,
   ACOES_BANCARIAS.REGISTRAR_BAIXA,
+  ACOES_BANCARIAS.BAIXAR_TITULO,
 ]);
 
 /** Ações de natureza administrativa (reversão e recuperação). */

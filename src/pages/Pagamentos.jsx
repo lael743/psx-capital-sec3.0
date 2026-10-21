@@ -6,6 +6,7 @@ import Pagination from '@/components/ui/Pagination';
 import FiltrosTitulos from '@/components/contasReceber/FiltrosTitulos';
 import TitulosTable from '@/components/contasReceber/TitulosTable';
 import HistoricoRecebimentos from '@/components/contasReceber/HistoricoRecebimentos';
+import BaixaTituloModal from '@/components/contasReceber/BaixaTituloModal';
 import {
   SITUACAO,
   carregarContasReceber,
@@ -19,7 +20,7 @@ import { AlertTriangle, CalendarClock, CheckCircle2, RefreshCw, ShieldAlert, Wal
 
 const FILTROS_TITULOS = { busca: '', situacao: '', origem: '', cliente: '', sacado: '', tipo: '', de: '', ate: '' };
 const FILTROS_HISTORICO = { busca: '', metodo: '', de: '', ate: '' };
-const VAZIO = { linhas: [], resumo: null, pagamentos: [], limitacoes: [], completude: null };
+const VAZIO = { linhas: [], resumo: null, pagamentos: [], liquidacoes: [], limitacoes: [], completude: null };
 
 function Aba({ ativa, onClick, children }) {
   return (
@@ -44,6 +45,8 @@ export default function ContasReceber() {
   const [ordem, setOrdem] = useState('asc');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [tituloEmBaixa, setTituloEmBaixa] = useState(null);
+  const [avisoBaixa, setAvisoBaixa] = useState(null);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -86,7 +89,7 @@ export default function ContasReceber() {
     <div className="p-4 md:p-6 max-w-7xl mx-auto">
       <PageHeader
         title="Contas a Receber"
-        subtitle="Consulta de títulos, situação, cobrança e evidências de recebimento — somente leitura"
+        subtitle="Consulta de títulos, situação, cobrança, evidências de recebimento e baixa de títulos elegíveis"
         action={
           <button
             onClick={carregar}
@@ -107,6 +110,18 @@ export default function ContasReceber() {
           <p className="text-sm text-red-700">Falha ao consultar os títulos: {erro}</p>
           <button onClick={carregar} className="px-3 py-2 text-xs font-semibold border border-red-300 rounded-lg bg-white hover:bg-red-100">
             Tentar novamente
+          </button>
+        </div>
+      )}
+
+      {avisoBaixa && (
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3 justify-between p-4 mb-5 rounded-xl border border-emerald-200 bg-emerald-50">
+          <p className="text-sm text-emerald-800">{avisoBaixa}</p>
+          <button
+            onClick={() => setAvisoBaixa(null)}
+            className="px-3 py-2 text-xs font-semibold border border-emerald-300 rounded-lg bg-white hover:bg-emerald-100"
+          >
+            Fechar
           </button>
         </div>
       )}
@@ -208,7 +223,12 @@ export default function ContasReceber() {
             </div>
           ) : (
             <>
-              <TitulosTable linhas={pagina} ordem={ordem} onOrdenar={() => setOrdem(ordem === 'asc' ? 'desc' : 'asc')} />
+              <TitulosTable
+                linhas={pagina}
+                ordem={ordem}
+                onOrdenar={() => setOrdem(ordem === 'asc' ? 'desc' : 'asc')}
+                onBaixar={(linha) => { setAvisoBaixa(null); setTituloEmBaixa(linha); }}
+              />
               <div className="mt-4 bg-white border border-border rounded-xl overflow-hidden">
                 <Pagination
                   page={page}
@@ -231,9 +251,24 @@ export default function ContasReceber() {
       ) : (
         <HistoricoRecebimentos
           payments={dados.pagamentos || []}
+          liquidacoes={dados.liquidacoes || []}
           loading={loading}
           filtros={filtrosHistorico}
           onChange={setFiltrosHistorico}
+        />
+      )}
+
+      {tituloEmBaixa && (
+        <BaixaTituloModal
+          linha={tituloEmBaixa}
+          onClose={() => setTituloEmBaixa(null)}
+          onSaved={(resultado) => {
+            const conta = resultado?.titulo?.conta_nome;
+            setAvisoBaixa(
+              `Baixa registrada${conta ? ` na conta ${conta}` : ''}. O título, os indicadores e o histórico foram atualizados.`,
+            );
+            carregar();
+          }}
         />
       )}
     </div>

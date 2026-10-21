@@ -28,7 +28,19 @@ function MiniStat({ label, value, icon: Icon }) {
  * Histórico de eventos de recebimento (entidade `Payment`) — SOMENTE LEITURA.
  * Preserva exatamente a consulta que a antiga tela Pagamentos oferecia.
  */
-export default function HistoricoRecebimentos({ payments = [], loading, filtros, onChange }) {
+export default function HistoricoRecebimentos({ payments = [], liquidacoes = [], loading, filtros, onChange }) {
+  const liquidacoesFiltradas = useMemo(() => {
+    const termo = (filtros.busca || '').toLowerCase();
+    return liquidacoes.filter((l) => {
+      const alvo = `${l.titulo || ''} ${l.descricao || ''} ${l.conta || ''}`.toLowerCase();
+      const matchBusca = !termo || alvo.includes(termo);
+      const data = (l.data || '').slice(0, 10);
+      const matchDe = !filtros.de || data >= filtros.de;
+      const matchAte = !filtros.ate || data <= filtros.ate;
+      return matchBusca && matchDe && matchAte;
+    });
+  }, [liquidacoes, filtros]);
+
   const filtrados = useMemo(() => {
     return payments.filter((p) => {
       const termo = (filtros.busca || '').toLowerCase();
@@ -137,6 +149,37 @@ export default function HistoricoRecebimentos({ payments = [], loading, filtros,
           </TableBody>
         </DataTable>
       )}
+
+      <div className="mt-8">
+        <h3 className="text-sm font-bold text-foreground">Liquidações de título</h3>
+        <p className="text-[11px] text-muted-foreground mb-3">
+          Recebimentos com título identificado (compensação), registrados no núcleo financeiro. Cada linha tem crédito na
+          conta e lançamento de caixa do mesmo evento — por isso o título pode ser comprovado na aba Títulos.
+        </p>
+        <DataTable>
+          <TableHead>
+            <Th>Data</Th>
+            <Th>Título</Th>
+            <Th className="hidden lg:table-cell">Lançamento</Th>
+            <Th>Conta</Th>
+            <Th right>Valor</Th>
+          </TableHead>
+          <TableBody>
+            {liquidacoesFiltradas.map((l) => (
+              <Tr key={l.id}>
+                <Td muted className="whitespace-nowrap">{l.data ? formatDate(l.data) : '—'}</Td>
+                <Td className="font-semibold whitespace-nowrap">{l.titulo || 'Sem número'}</Td>
+                <Td muted className="text-xs hidden lg:table-cell max-w-[240px] truncate">{l.descricao}</Td>
+                <Td muted className="whitespace-nowrap">{l.conta}</Td>
+                <Td right mono className="font-semibold text-emerald-600 whitespace-nowrap">{formatCurrency(l.valor)}</Td>
+              </Tr>
+            ))}
+            {liquidacoesFiltradas.length === 0 && (
+              <EmptyRow colSpan={5} message="Nenhuma liquidação de título no período." />
+            )}
+          </TableBody>
+        </DataTable>
+      </div>
     </div>
   );
 }

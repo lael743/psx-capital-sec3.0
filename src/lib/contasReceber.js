@@ -1051,6 +1051,81 @@ const FILTRO_LANCAMENTOS = {
   ],
 };
 
+/* ────────────────────────────────────────────────────────────────────────────
+ * M6.4 — BAIXA INDIVIDUAL DE TÍTULO
+ *
+ * Esta central continua sendo LEITURA. As duas funções abaixo apenas decidem
+ * se a linha pode oferecer a ação e como apresentar as liquidações já feitas:
+ * nenhuma delas escreve nada. O efeito financeiro é do núcleo de compensação,
+ * no servidor (`baixaTitulo` → `chequeEventFlow.compensarCheque`), e esta
+ * decisão de tela NÃO é autoridade — o servidor revalida tudo.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/**
+ * A linha da Central pode oferecer "Registrar baixa"?
+ *
+ * Só títulos de origem `cheque` em estado `pendente`, sem inconsistência, com
+ * valor, vencimento e operação. Parcelas de agenda sem título não têm
+ * mecanismo individual de liquidação — a limitação é explicitada no motivo.
+ */
+export function tituloElegivelParaBaixa(linha) {
+  const recusa = (motivo) => ({ elegivel: false, motivo });
+
+  if (!linha) return recusa('Título indisponível.');
+  if (linha.origem !== 'cheque') {
+    return recusa(
+      'Parcela sem título: não existe mecanismo de baixa individual para este registro (limitação registrada).',
+    );
+  }
+  if (!linha.registro_id) return recusa('Título sem identidade própria.');
+  if (linha.inconsistente) return recusa('Título com inconsistência — resolva antes de baixar.');
+
+  const status = String(linha.status_registro || '').toLowerCase();
+  if (status === 'compensado') return recusa('Título já liquidado.');
+  if (status === 'cancelado') return recusa('Título cancelado.');
+  if (status === 'devolvido' || status.indexOf('resolvido_') === 0) {
+    return recusa('Título devolvido ou resolvido é tratado no fluxo de devolução.');
+  }
+  if (status !== 'pendente') return recusa('Título fora de condição de baixa.');
+  if (!(Number(linha.valor_face) > 0)) return recusa('Título sem valor de face.');
+  if (!linha.vencimento) return recusa('Vencimento ausente.');
+  if (!linha.operacao_id) return recusa('Título sem operação vinculada.');
+  if (
+    linha.saldo_operacao !== null &&
+    linha.saldo_operacao !== undefined &&
+    Number(linha.saldo_operacao) <= 0
+  ) {
+    return recusa('Operação sem saldo em aberto.');
+  }
+  return { elegivel: true, motivo: '' };
+}
+
+/**
+ * Liquidações de título (compensações) para o histórico da central.
+ * Deriva dos lançamentos JÁ carregados pela consulta — nada é escrito.
+ */
+export function montarLiquidacoes({ cashflows = [], bancos = [], cheques = [] } = {}) {
+  const nomeBanco = new Map((bancos || []).map((b) => [String(b.id), b.name]));
+  const numeroTitulo = new Map((cheques || []).map((c) => [String(c.id), c.check_number]));
+
+  return (cashflows || [])
+    .filter((cf) => cf && cf.source_type === 'cheque_compensacao')
+    .map((cf) => {
+      const tituloId = String(cf.source_id || '').split('#')[0];
+      return {
+        id: cf.id,
+        data: normalizarData(cf.date),
+        titulo: numeroTitulo.get(tituloId) || null,
+        titulo_id: tituloId || null,
+        descricao: cf.description || 'Liquidação de título',
+        conta: nomeBanco.get(String(cf.bank_id)) || 'Conta não identificada',
+        valor: round2(cf.amount),
+        operacao_id: cf.operation_id || null,
+      };
+    })
+    .sort((a, b) => (a.data === b.data ? 0 : a.data < b.data ? 1 : -1));
+}
+
 /**
  * Carrega e normaliza. SOMENTE LEITURA: usa apenas `filter` das entidades que a
  * sessão já pode consultar (respeita o RLS vigente, sem privilégio de serviço).
@@ -1112,5 +1187,13 @@ export async function carregarContasReceber(api, opcoes = {}) {
     { ...opcoes, completude, limitacoes },
   );
 
-  return { ...resultado, pagamentos: pagamentosR.registros };
+  return {
+    ...resultado,
+    pagamentos: pagamentosR.registros,
+    liquidacoes: montarLiquidacoes({
+      cashflows: lancamentosR.registros,
+      bancos: bancosR.registros,
+      cheques: chequesR.registros,
+    }),
+  };
 }

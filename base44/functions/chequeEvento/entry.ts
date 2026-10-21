@@ -51,8 +51,7 @@ import {
   recuperarTaxaDevolucao,
   MOTIVOS,
 } from '../../shared/chequeEventFlow.js';
-import { createChequeCashFlow } from '../../shared/cashFlowHelper.ts';
-import { sincronizarOperacao } from '../../shared/chequeWrite.ts';
+import { criarIoChequeEvento } from '../../shared/chequeEventIo.js';
 
 const ID_REGEX = /^[a-f0-9]{24}$/i;
 const DATA_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -176,45 +175,12 @@ Deno.serve(async (req) => {
   const cheque = await servico.entities.Cheque.get(chequeId).catch(() => null);
   if (!cheque) return falha('Cheque não encontrado.', 404);
 
-  // ── NORMALIZAÇÃO DE TRANSPORTE ─────────────────────────────────────────
-  // O cliente de SERVIÇO devolve página (`{ items, next_cursor }`) em `filter`;
-  // o do navegador devolve array. O núcleo financeiro foi escrito para array e
-  // precisa continuar idêntico nos dois lados — então a diferença de transporte
-  // é resolvida AQUI, não no módulo financeiro.
-  const lista = (r: any) => (Array.isArray(r) ? r : (r && r.items) || []);
-  const apiSync: any = {
-    entities: new Proxy({}, {
-      get(_alvo, nome) {
-        const colecao: any = (servico.entities as any)[nome as string];
-        return {
-          get: (id: string) => colecao.get(id),
-          filter: async (query: any) => lista(await colecao.filter(query)),
-          create: (doc: any) => colecao.create(doc),
-          update: (id: string, patch: any) => colecao.update(id, patch),
-          updateMany: (query: any, update: any) => colecao.updateMany(query, update),
-        };
-      },
-    }),
-  };
-  // `createOperationalCashFlow` acessa `base44.asServiceRole.entities` — o
-  // cliente normalizado precisa expor essa mesma superfície.
-  apiSync.asServiceRole = apiSync;
-
   // ── I/O real injetado na orquestração compartilhada ────────────────────
-  const io = {
-    chequeStore: {
-      updateWhere: (query: any, update: any) => servico.entities.Cheque.updateMany(query, update),
-      read: (id: string) => servico.entities.Cheque.get(id).catch(() => null),
-    },
-    bancoStore: {
-      updateWhere: (query: any, update: any) => servico.entities.Banco.updateMany(query, update),
-      get: (id: string) => servico.entities.Banco.get(id).catch(() => null),
-    },
-    criarLancamento: (params: any) => createChequeCashFlow(apiSync, params),
-    sincronizar: (operationId?: string, excluir?: string) =>
-      sincronizarOperacao(apiSync, operationId, excluir),
-    lerLancamentos: async (query: any) => lista(await servico.entities.CashFlow.filter(query).catch(() => [])),
-  };
+  // O transporte (cliente de serviço, normalização de página, caixa e
+  // sincronização do cronograma) mora em `shared/chequeEventIo.js` porque a
+  // baixa de título pela Central precisa do MESMO `io` para chamar o MESMO
+  // núcleo — nada de regra financeira aqui, só o mesmo caminho.
+  const { io, lista } = criarIoChequeEvento(servico) as any;
 
   // ── M2 — resolução: privilégio de serviço + escrita financeira ─────────
   const ioResolucao = {

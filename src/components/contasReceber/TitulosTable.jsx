@@ -2,7 +2,7 @@ import { ArrowUpDown } from 'lucide-react';
 import { DataTable, TableHead, Th, TableBody, Tr, Td, EmptyRow } from '@/components/ui/DataTable';
 import SituacaoBadge from '@/components/contasReceber/SituacaoBadge';
 import CobrancaBadge from '@/components/contasReceber/CobrancaBadge';
-import { GRAU_LABEL } from '@/lib/contasReceber';
+import { GRAU_LABEL, tituloElegivelParaBaixa } from '@/lib/contasReceber';
 import { formatCurrency, formatDate } from '@/lib/finance';
 
 function Valor({ valor }) {
@@ -10,6 +10,26 @@ function Valor({ valor }) {
     return <span className="text-xs italic text-muted-foreground">Indisponível</span>;
   }
   return <span className="font-semibold">{formatCurrency(valor)}</span>;
+}
+
+/** M6.4 — célula de baixa: só oferece a ação para título elegível. */
+function BaixaCell({ linha, onBaixar }) {
+  const elegivel = tituloElegivelParaBaixa(linha);
+  if (!onBaixar || !elegivel.elegivel) {
+    return (
+      <span className="text-xs text-muted-foreground/70 whitespace-nowrap" title={elegivel.motivo}>
+        —
+      </span>
+    );
+  }
+  return (
+    <button
+      onClick={() => onBaixar(linha)}
+      className="px-2.5 py-1 text-[11px] font-semibold border border-emerald-300 text-emerald-700 rounded-lg hover:bg-emerald-50 whitespace-nowrap"
+    >
+      Registrar baixa
+    </button>
+  );
 }
 
 function Motivos({ linha }) {
@@ -24,7 +44,7 @@ function Motivos({ linha }) {
   );
 }
 
-export default function TitulosTable({ linhas, ordem, onOrdenar }) {
+export default function TitulosTable({ linhas, ordem, onOrdenar, onBaixar }) {
   return (
     <DataTable>
       <TableHead>
@@ -43,6 +63,7 @@ export default function TitulosTable({ linhas, ordem, onOrdenar }) {
         <Th className="hidden xl:table-cell">Cobrança</Th>
         <Th className="hidden md:table-cell">Origem</Th>
         <Th right className="hidden xl:table-cell">Saldo da operação</Th>
+        <Th right>Baixa</Th>
       </TableHead>
       <TableBody>
         {linhas.map((linha) => (
@@ -81,9 +102,12 @@ export default function TitulosTable({ linhas, ordem, onOrdenar }) {
                 <span className="text-muted-foreground">{formatCurrency(linha.saldo_operacao)}</span>
               )}
             </Td>
+            <Td right>
+              <BaixaCell linha={linha} onBaixar={onBaixar} />
+            </Td>
           </Tr>
         ))}
-        {linhas.length === 0 && <EmptyRow colSpan={10} message="Nenhum título encontrado com os filtros atuais." />}
+        {linhas.length === 0 && <EmptyRow colSpan={11} message="Nenhum título encontrado com os filtros atuais." />}
       </TableBody>
     </DataTable>
   );
