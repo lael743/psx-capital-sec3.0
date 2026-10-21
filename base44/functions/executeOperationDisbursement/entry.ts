@@ -1,147 +1,184 @@
+/**
+ * M7 — REPASSE AO CEDENTE (autoridade única de execução).
+ *
+ * ── ORDEM OBRIGATÓRIA ──────────────────────────────────────────────────────
+ *   identidade (token) → autorização e pré-requisitos pela regra do workflow
+ *   (`avaliarRepasse`) → idempotência (repasse já registrado?) → segunda
+ *   autorização (token do assessor) → dados validados no servidor → efeitos no
+ *   núcleo `disbursement.js` → auditoria → resposta.
+ *
+ * Nada de valor, conta, data ou permissão vem do corpo: o corpo escolhe apenas
+ * a conta de origem, a data, a referência/comprovante e o token do assessor. O
+ * VALOR é lido da operação (`net_value`), como sempre foi.
+ *
+ * ── O QUE ESTA FUNÇÃO GARANTE ──────────────────────────────────────────────
+ *
+ * 1. SÓ NA ETAPA "pagamento", com contrato assinado quando a modalidade exige.
+ *    Antes desta correção a função aceitava execução em qualquer etapa e não
+ *    consultava a regra do workflow — o botão de repasse não existia na tela e
+ *    "pagamento" não tinha saída.
+ *
+ * 2. NENHUM REPASSE DUPLICADO, nem em tentativas simultâneas: o saldo é
+ *    debitado por `applyBankDelta` com chave de evento determinística, e a
+ *    prova na operação é gravada por compare-and-swap. Repetir devolve
+ *    `duplicate: true` sem novo efeito.
+ *
+ * 3. A OPERAÇÃO NÃO FINALIZA POR AQUI. Esta função registra o repasse e grava
+ *    `payment_executed`; a passagem "pagamento" → "finalizada" continua sendo
+ *    uma transição do workflow, decidida por `avaliarTransicao` no servidor.
+ *    Ninguém finaliza a operação trocando `status`.
+ */
 import { createClientFromRequest } from 'npm:@base44/sdk@0.8.25';
-import { applyBankDelta, chaveEvento } from '../../shared/bankLedger.ts';
 
-Deno.serve(async (req) => {
+import { avaliarRepasse } from '../../shared/operationWorkflow.js';
+import { registrarRepasse, valorDoRepasse, numeroCurto } from '../../shared/disbursement.js';
+
+const falha = (erro, status = 400, extra = {}) => Response.json({ ok: false, erro, ...extra }, { status });
+const hojeISO = () => new Date().toISOString().split('T')[0];
+
+export default async function (req) {
   try {
     const base44 = createClientFromRequest(req);
-    const user = await base44.auth.me();
-    if (!user) {
-      return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+    // 1. Identidade SEMPRE do token da plataforma.
+    const usuario = await base44.auth.me().catch(() => null);
+    if (!usuario || !usuario.email) return falha('Não autenticado.', 401);
+
+    let body = {};
+    try { body = (await req.json()) || {}; } catch (_) { body = {}; }
+
+    const operacaoId = String(body.operation_id || body.operacaoId || '');
+    const bancoId = String(body.disbursement_bank_id || '');
+    const referencia = String(body.referencia || body.disbursement_reference || '').trim();
+    const comprovanteUrl = String(body.comprovante_url || body.disbursement_proof_url || '').trim();
+    const forma = String(body.forma || '');
+    const dataInformada = String(body.data || '').trim();
+    const assessorToken = String(body.assessor_token || '').trim();
+
+    if (!operacaoId) return falha('operation_id é obrigatório.', 400);
+    if (!bancoId) return falha('Conta de origem do repasse é obrigatória.', 400);
+
+    const servico = base44.asServiceRole;
+    const operacao = await servico.entities.Operation.get(operacaoId).catch(() => null);
+    if (!operacao) return falha('Operação não encontrada.', 404);
+
+    // 2. Autorização e pré-requisitos: MESMA regra que a tela consulta.
+    const decisao = avaliarRepasse({ operacao, usuario });
+    if (!decisao.permitida) {
+      return falha(decisao.motivo || 'Repasse não permitido.', decisao.status || 409, {
+        etapa: decisao.etapaAtual,
+        bloqueios: decisao.bloqueios || [],
+      });
     }
 
-    const { operation_id, disbursement_bank_id, disbursement_bank_name, assessor_token } = await req.json();
-
-    if (!operation_id || !disbursement_bank_id) {
-      return Response.json({ error: 'operation_id e disbursement_bank_id são obrigatórios' }, { status: 400 });
+    // 3. Já registrado: resposta idempotente, sem nenhum efeito novo.
+    if (operacao.payment_executed === true) {
+      return Response.json({
+        ok: true,
+        duplicate: true,
+        ja_registrado: true,
+        valor: valorDoRepasse(operacao),
+        data: operacao.payment_execution_date || null,
+        conta: operacao.disbursement_bank_name || null,
+        referencia: operacao.disbursement_reference || null,
+        mensagem: 'O repasse desta operação já estava registrado; nada foi executado de novo.',
+      });
     }
 
-    // ── Validação do token do assessor ──
-    if (!assessor_token || assessor_token.trim() === '') {
-      return Response.json({ error: 'Token de segurança do assessor é obrigatório para executar o repasse.' }, { status: 403 });
+    // 4. Segunda autorização (duplo controle): token do assessor — regra já existente.
+    if (!assessorToken) {
+      return falha('Token de segurança do assessor é obrigatório para executar o repasse.', 403);
     }
-
-    // Busca assessor ativo com esse token vinculado ao usuário atual
-    const assessores = await base44.asServiceRole.entities.Assessor.filter({ active: true });
-    const assessorMatch = assessores.find(a => a.token === assessor_token.trim());
-
-    if (!assessorMatch) {
-      // Log tentativa inválida
-      await base44.asServiceRole.entities.AuditLog.create({
-        user_email: user.email,
-        user_name: user.full_name || user.email,
+    const assessores = await servico.entities.Assessor.filter({ active: true });
+    const assessor = (assessores || []).find((a) => a.token === assessorToken);
+    if (!assessor || assessor.active === false) {
+      await servico.entities.AuditLog.create({
+        user_email: usuario.email,
+        user_name: usuario.full_name || usuario.email,
         action: 'auth_failure',
         entity: 'Operation',
-        entity_id: operation_id,
-        description: `Tentativa de repasse com token inválido por ${user.email} — Op. #${operation_id.slice(-6).toUpperCase()}`,
+        entity_id: operacaoId,
+        description: `Tentativa de repasse com token inválido por ${usuario.email} — Op. ${numeroCurto(operacao)}`,
       });
-      return Response.json({ error: 'Token de segurança inválido. Acesso negado.' }, { status: 403 });
+      return falha('Token de segurança inválido. Acesso negado.', 403);
     }
 
-    if (!assessorMatch.active) {
-      return Response.json({ error: 'Assessor inativo. Contate o administrador.' }, { status: 403 });
+    // 5. Dados do repasse validados no servidor.
+    const banco = await servico.entities.Banco.get(bancoId).catch(() => null);
+    if (!banco) return falha('Conta de origem do repasse não encontrada.', 404);
+
+    const valor = valorDoRepasse(operacao);
+    if (!(valor > 0)) return falha('Operação sem valor líquido para repasse.', 409);
+
+    const data = dataInformada || hojeISO();
+    if (Number.isNaN(Date.parse(data))) return falha('Data do repasse inválida.', 400);
+    if (data > hojeISO()) return falha('A data do repasse não pode ser futura.', 400);
+    if (referencia.length < 3 && !/^https?:\/\//i.test(comprovanteUrl)) {
+      return falha('Informe a referência da transferência ou o comprovante do repasse.', 400);
     }
 
-    // ── Carregar operação ──
-    const operation = await base44.asServiceRole.entities.Operation.get(operation_id);
-    if (!operation) {
-      return Response.json({ error: 'Operação não encontrada' }, { status: 404 });
-    }
-
-    // Bloqueia se contrato pendente
-    if (operation.needs_contract && !operation.contract_signed_confirmed) {
-      return Response.json({ error: 'Contrato assinado não confirmado. Confirme antes de executar o repasse.' }, { status: 400 });
-    }
-
-    // ── Carregar banco ──
-    const bank = await base44.asServiceRole.entities.Banco.get(disbursement_bank_id);
-    if (!bank) {
-      return Response.json({ error: 'Banco não encontrado' }, { status: 404 });
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    const netValue = operation.net_value || 0;
-    if (!(netValue > 0)) {
-      return Response.json({ error: 'Operação sem valor líquido para repasse' }, { status: 400 });
-    }
-
-    const sourceType = 'repasse_cliente';
-    const store = { updateWhere: (q, u) => base44.asServiceRole.entities.Banco.updateMany(q, u) };
-
-    const criarLancamento = () =>
-      base44.asServiceRole.entities.CashFlow.create({
-        type: 'saida',
-        category: sourceType,
-        amount: netValue,
-        date: today,
-        description: `Repasse ao cliente ${operation.client_name} — Banco: ${disbursement_bank_name} — Op. #${operation_id.slice(-6).toUpperCase()} — Auth: ${assessorMatch.name}`,
-        operation_id,
-        bank_id: disbursement_bank_id,
-        source_type: sourceType,
-        source_id: operation_id,
-        method: 'transferencia',
-      });
-
-    // Efeito de saldo: incremento atômico com guarda de chave no mesmo documento.
-    const efeito = await applyBankDelta({
-      store,
-      bankId: disbursement_bank_id,
-      delta: -netValue,
-      eventKey: chaveEvento(sourceType, operation_id),
+    // 6. Efeitos: saldo + lançamento no extrato + prova na operação.
+    const resultado = await registrarRepasse({
+      bancoStore: servico.entities.Banco,
+      cashflowStore: servico.entities.CashFlow,
+      operacaoStore: servico.entities.Operation,
+      operacao,
+      bancoId,
+      bancoNome: banco.name || String(body.disbursement_bank_name || ''),
+      data,
+      referencia,
+      comprovanteUrl,
+      forma: forma || operacao.disbursement_method || '',
+      autorizadoPor: assessor.name || '',
+      dono: usuario.email,
     });
 
-    if (efeito.status === 'ja_aplicado') {
-      const existentes = await base44.asServiceRole.entities.CashFlow.filter({
-        source_type: sourceType,
-        source_id: operation_id,
-      });
-      if (!existentes || existentes.length === 0) await criarLancamento();
-      const atual = await base44.asServiceRole.entities.Banco.get(disbursement_bank_id);
-      return Response.json({
-        success: true,
-        duplicate: true,
-        message: 'Repasse já havia sido contabilizado para esta operação',
-        new_bank_balance: atual?.current_balance ?? null,
-        authorized_by: assessorMatch.name,
+    if (resultado.status === 'sem_conta' || resultado.status === 'sem_efeito') {
+      return falha(resultado.erro || 'Repasse não aplicado.', 409);
+    }
+
+    // 7. Auditoria: uma por efeito novo (a repetição pura não gera registro).
+    if (resultado.status === 'aplicado' || resultado.operacao_atualizada) {
+      await servico.entities.AuditLog.create({
+        user_email: usuario.email,
+        user_name: usuario.full_name || usuario.email,
+        action: resultado.status === 'aplicado' ? 'execute_disbursement' : 'recuperar_disbursement',
+        entity: 'Operation',
+        entity_id: operacaoId,
+        description: `Repasse de R$ ${valor.toFixed(2)} para ${operacao.client_name || 'cedente'} via ${banco.name} — Op. ${numeroCurto(operacao)} — Ref: ${referencia || comprovanteUrl} — Autorizado por assessor: ${assessor.name}`,
+        after: {
+          valor,
+          data,
+          conta_id: bancoId,
+          conta: banco.name || null,
+          referencia: referencia || null,
+          comprovante_url: comprovanteUrl || null,
+          assessor: assessor.name || null,
+          assessor_email: assessor.user_email || null,
+          lancamento_id: resultado.lancamento_id,
+          evento: resultado.evento,
+        },
       });
     }
 
-    await criarLancamento();
-
-    // Atualiza operação para ativo
-    await base44.asServiceRole.entities.Operation.update(operation_id, {
-      payment_executed: true,
-      payment_execution_date: today,
-      disbursement_bank_id,
-      disbursement_bank_name,
-      assessor: assessorMatch.name,
-      status: 'repasse_concluido',
-    });
-
-    // ── Audit log com responsável ──
-    await base44.asServiceRole.entities.AuditLog.create({
-      user_email: user.email,
-      user_name: user.full_name || user.email,
-      action: 'execute_disbursement',
-      entity: 'Operation',
-      entity_id: operation_id,
-      description: `Repasse de R$ ${netValue.toFixed(2)} executado para ${operation.client_name} via ${disbursement_bank_name} — Autorizado por assessor: ${assessorMatch.name} (${assessorMatch.user_email})`,
-      after: {
-        assessor: assessorMatch.name,
-        assessor_email: assessorMatch.user_email,
-        disbursement_bank: disbursement_bank_name,
-        net_value: netValue,
-        execution_date: today,
-      },
-    });
-
-    const bancoAtual = await base44.asServiceRole.entities.Banco.get(disbursement_bank_id);
+    const bancoAtual = await servico.entities.Banco.get(bancoId).catch(() => null);
 
     return Response.json({
+      ok: true,
       success: true,
-      new_bank_balance: bancoAtual?.current_balance ?? null,
-      authorized_by: assessorMatch.name,
+      duplicate: resultado.status === 'ja_aplicado',
+      valor,
+      data,
+      conta_id: bancoId,
+      conta: banco.name || null,
+      referencia: referencia || null,
+      comprovante_url: comprovanteUrl || null,
+      lancamento_id: resultado.lancamento_id,
+      lancamento_pendente: resultado.lancamento_pendente === true,
+      new_bank_balance: bancoAtual ? bancoAtual.current_balance ?? null : null,
+      authorized_by: assessor.name || null,
     });
   } catch (error) {
-    return Response.json({ error: error.message }, { status: 500 });
+    return Response.json({ ok: false, erro: error.message }, { status: 500 });
   }
-});
+}

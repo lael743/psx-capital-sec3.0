@@ -259,8 +259,12 @@ export default async function (req) {
       temContrato = docs.some((d) => d.doc_type === 'contrato' || !!d.file_url);
     }
 
+    // Assinatura: o vínculo (assinantes) é pré-requisito do caminho próprio da
+    // etapa de confirmação de títulos e também informa a etapa de pagamento.
+    // Lido pelo SERVIDOR, nunca do corpo da requisição.
     let temVinculoAssinatura = false;
-    if (acao === ACOES.AVANCAR && etapaAtualServidor === 'pagamento' && (operacao.produto || operacao.type) === 'assinatura') {
+    const ehOperacaoAssinatura = (operacao.produto || operacao.type) === 'assinatura';
+    if (acao === ACOES.AVANCAR && ehOperacaoAssinatura && ['confirmacao_titulos', 'pagamento'].includes(etapaAtualServidor)) {
       const vinculos = await paginar(servico.entities.AssinaturaVinculo, { operation_id: operacaoId }, 2);
       temVinculoAssinatura = vinculos.length > 0;
     }

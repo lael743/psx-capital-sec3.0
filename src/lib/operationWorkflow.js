@@ -54,6 +54,16 @@ export const ACOES = Object.freeze({
   VOLTAR_RASCUNHO: 'voltar_rascunho',
 });
 
+/**
+ * Ação de EFEITO (não de etapa): registrar o repasse ao cedente.
+ *
+ * Não entra em `TRANSICOES` porque NÃO troca a etapa — ela acontece DENTRO de
+ * "pagamento" e é a prova que libera a passagem para "finalizada". O dinheiro é
+ * debitado da conta da PSX pelo núcleo `disbursement.js`; aqui só se decide
+ * QUEM pode e QUANDO pode.
+ */
+export const ACAO_REPASSE = 'repasse';
+
 const OPERACIONAL = 'operacional';
 const ADMIN = 'admin';
 
@@ -188,10 +198,16 @@ function pendenciasDeAvanco(etapaAtual, operacao, titulos, contexto) {
   const cliente = contexto.cliente || null;
   const config = contexto.config || {};
   const tipo = operacao.produto || operacao.type || 'emprestimo';
+  const ehAssinatura = tipo === 'assinatura';
   const somaTitulos = (titulos || []).reduce((s, t) => s + valorDoTitulo(t), 0);
 
   if (etapaAtual === 'rascunho' || etapaAtual === 'nova') {
-    if (!(titulos || []).some((t) => valorDoTitulo(t) > 0)) {
+    if (ehAssinatura) {
+      // Assinatura não nasce de título: nasce de valor antecipado ao cedente.
+      if (!(numero(operacao.valor_antecipacao) > 0)) {
+        bloqueios.push('Informe o valor da antecipação da assinatura antes de avançar.');
+      }
+    } else if (!(titulos || []).some((t) => valorDoTitulo(t) > 0)) {
       bloqueios.push('Adicione ao menos um título com valor antes de avançar.');
     }
     if (tipo !== 'emprestimo' && !operacao.client_id) {
@@ -218,16 +234,33 @@ function pendenciasDeAvanco(etapaAtual, operacao, titulos, contexto) {
   }
 
   if (etapaAtual === 'confirmacao_titulos') {
-    const naoPendentes = (titulos || []).filter((t) => t.status !== 'pendente');
-    if (naoPendentes.length > 0) {
-      bloqueios.push(`${naoPendentes.length} título(s) não estão pendentes; regularize antes de formalizar.`);
-    }
-    if (!(titulos || []).length || somaTitulos <= 0) {
-      bloqueios.push('A operação precisa de títulos válidos para ser formalizada.');
-    }
-    const agenda = Array.isArray(operacao.installment_schedule) ? operacao.installment_schedule : [];
-    if (agenda.length === 0 || !agenda.every((p) => p && p.id)) {
-      bloqueios.push('A agenda de parcelas está incompleta; salve a operação novamente antes de formalizar.');
+    if (ehAssinatura) {
+      // ── CAMINHO PRÓPRIO DA ASSINATURA (recorrência) ──────────────────────
+      // Comprovado pelo modelo atual, não presumido: o wizard de assinatura
+      // (`OperacaoForm.saveAssinatura`) grava `installment_schedule: []`, não
+      // cria nenhum `Cheque` e só deixa salvar com `valor_antecipacao > 0` e
+      // pelo menos um assinante. A receita vem dos ciclos do Asaas
+      // (`AssinaturaVinculo`), não de títulos. Exigir título e agenda aqui
+      // travava TODA assinatura nesta etapa. O que a etapa exige delas é o que
+      // o próprio modelo promete: antecipação definida e assinante vinculado.
+      if (!(numero(operacao.valor_antecipacao) > 0)) {
+        bloqueios.push('Informe o valor da antecipação da assinatura antes de formalizar.');
+      }
+      if (!contexto.temVinculoAssinatura && !operacao.asaas_subscription_id) {
+        bloqueios.push('Cadastre ao menos um assinante (vínculo de assinatura) antes de formalizar.');
+      }
+    } else {
+      const naoPendentes = (titulos || []).filter((t) => t.status !== 'pendente');
+      if (naoPendentes.length > 0) {
+        bloqueios.push(`${naoPendentes.length} título(s) não estão pendentes; regularize antes de formalizar.`);
+      }
+      if (!(titulos || []).length || somaTitulos <= 0) {
+        bloqueios.push('A operação precisa de títulos válidos para ser formalizada.');
+      }
+      const agenda = Array.isArray(operacao.installment_schedule) ? operacao.installment_schedule : [];
+      if (agenda.length === 0 || !agenda.every((p) => p && p.id)) {
+        bloqueios.push('A agenda de parcelas está incompleta; salve a operação novamente antes de formalizar.');
+      }
     }
   }
 
@@ -367,6 +400,63 @@ export function avaliarTransicao(pedido = {}) {
     restaurar: acao === ACOES.REABRIR ? titulosParaRestaurar(titulos) : [],
     motivo: String(motivo || '').trim(),
   };
+}
+
+/**
+ * REPASSE AO CEDENTE — autorização e pré-requisitos (efeito, não etapa).
+ *
+ * A decisão é desta função e roda no SERVIDOR dentro da execução do repasse
+ * (`executeOperationDisbursement`); a tela usa a MESMA função só para decidir se
+ * mostra o formulário. Exige a etapa "pagamento" porque é nela que o dinheiro
+ * sai, e o contrato assinado quando a modalidade pede contrato — é o que
+ * recusa repasse de operação sem assinatura.
+ *
+ * `payment_executed` NÃO é bloqueio aqui: quem responde a uma repetição é a
+ * execução (idempotente), para que um retry após resposta perdida devolva o
+ * mesmo resultado em vez de um erro.
+ */
+export function avaliarRepasse({ operacao = {}, usuario = null } = {}) {
+  const papel = papelDoUsuario(usuario);
+  if (papel === 'anonimo') {
+    return { permitida: false, status: 401, papel, motivo: 'Não autenticado.', bloqueios: [] };
+  }
+  if (papel === 'desconhecido' || papel === 'sem_permissao') {
+    return {
+      permitida: false,
+      status: 403,
+      papel,
+      motivo: 'Página de Operações não liberada para este usuário.',
+      bloqueios: [],
+    };
+  }
+
+  const etapaAtual = normalizarEtapa(operacao.etapa);
+  if (etapaAtual !== 'pagamento') {
+    return {
+      permitida: false,
+      status: 409,
+      papel,
+      etapaAtual,
+      motivo: `O repasse ao cedente só pode ser registrado na etapa "pagamento" (a operação está em "${etapaAtual}").`,
+      bloqueios: [],
+    };
+  }
+
+  const bloqueios = [];
+  if (operacao.needs_contract === true && operacao.contract_signed_confirmed !== true) {
+    bloqueios.push('Confirme o contrato assinado antes de registrar o repasse.');
+  }
+  const valor = numero(operacao.net_value === undefined || operacao.net_value === null
+    ? operacao.gross_value
+    : operacao.net_value);
+  if (!(valor > 0)) {
+    bloqueios.push('Operação sem valor líquido para repasse.');
+  }
+  if (bloqueios.length > 0) {
+    return { permitida: false, status: 409, papel, etapaAtual, motivo: bloqueios[0], bloqueios };
+  }
+
+  return { permitida: true, papel, etapaAtual, valor, bloqueios: [], motivo: '' };
 }
 
 /** Ações que a interface deve oferecer para a etapa e o papel atuais. */

@@ -25,6 +25,7 @@ import AdicionarTituloModal from '@/components/operacao/AdicionarTituloModal';
 import EditarCondicoesModal from '@/components/operacao/EditarCondicoesModal';
 import AssinaturaColetaPanel from '@/components/operacao/AssinaturaColetaPanel';
 import BancariosTab from '@/components/operacao/BancariosTab';
+import RepassePanel from '@/components/operacao/RepassePanel';
 import OperacaoDocumentosPanel from '@/components/operacao/OperacaoDocumentosPanel';
 import AsaasChargeCard from '@/components/asaas/AsaasChargeCard';
 import SacadoInfoCard from '@/components/operacao/SacadoInfoCard';
@@ -265,6 +266,9 @@ export default function OperacaoDetail() {
 
           
         </div>
+
+        {/* M7 — repasse ao cedente: registro na etapa "pagamento" */}
+        {(op.etapa || 'nova') === 'pagamento' && <RepassePanel operacao={op} onUpdate={load} />}
 
         {/* Summary Panel */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">

@@ -496,10 +496,18 @@ test('D3.21 — funções de recebimento e repasse gravam a conta no lançamento
   assert.match(recebimento, /applyBankDelta/);
   assert.doesNotMatch(recebimento, /current_balance: newBalance/, 'não pode voltar a escrever saldo por leitura antiga');
 
-  const repasse = leitura('../../base44/functions/executeOperationDisbursement/entry.ts');
-  assert.match(repasse, /bank_id: disbursement_bank_id/);
+  // M7 — o efeito do repasse passou a viver no núcleo compartilhado
+  // (`shared/disbursement.js`); a função de servidor autoriza e delega. A
+  // intenção da asserção continua a mesma: o lançamento identifica a conta e o
+  // saldo é aplicado por evento, nunca por leitura antiga sobrescrita.
+  const repasse = leitura('../../base44/shared/disbursement.js');
+  assert.match(repasse, /bank_id: bancoId/);
   assert.match(repasse, /applyBankDelta/);
   assert.doesNotMatch(repasse, /current_balance: newBalance/);
+
+  const autoridadeRepasse = leitura('../../base44/functions/executeOperationDisbursement/entry.ts');
+  assert.match(autoridadeRepasse, /avaliarRepasse/, 'a execução deve consultar a regra do workflow');
+  assert.doesNotMatch(autoridadeRepasse, /entities\.Operation\.update\(/, 'a prova do repasse é compare-and-swap no núcleo');
 });
 
 // ═════════════════════════ 10. sincronia das cópias ════════════════════════
