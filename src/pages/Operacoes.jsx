@@ -44,23 +44,37 @@ export default function Operacoes() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [loadError, setLoadError] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    const fetchAll = async () => {
-      let allOps = [];
-      let lastDate = null;
-      while (true) {
-        const query = lastDate ? { created_date: { $lt: lastDate } } : {};
-        const batch = await base44.entities.Operation.filter(query, '-created_date', 500);
-        allOps = [...allOps, ...batch];
-        if (batch.length < 500) break;
-        lastDate = batch[batch.length - 1].created_date;
+    let cancelled = false;
+    const PAGE = 200;
+
+    const load = async () => {
+      setLoading(true);
+      setLoadError(false);
+      try {
+        let allOps = [];
+        let cursor = null;
+        for (let i = 0; i < 50; i += 1) {
+          const page = await base44.entities.Operation.list({ sort: '-created_date', limit: PAGE, cursor });
+          const items = page?.items || [];
+          allOps = allOps.concat(items);
+          if (!page?.has_more || !page?.next_cursor || items.length === 0) break;
+          cursor = page.next_cursor;
+        }
+        if (!cancelled) setOperations(allOps);
+      } catch {
+        if (!cancelled) setLoadError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      setOperations(allOps);
-      setLoading(false);
     };
-    fetchAll();
-  }, []);
+
+    load();
+    return () => { cancelled = true; };
+  }, [reloadKey]);
 
   // Generate sequential operation numbers by creation order
   const opNumberMap = useMemo(() => {
@@ -263,6 +277,16 @@ export default function Operacoes() {
       {loading ? (
         <div className="flex items-center justify-center h-48">
           <div className="w-6 h-6 border-2 border-border border-t-foreground rounded-full animate-spin" />
+        </div>
+      ) : loadError ? (
+        <div className="bg-white border border-border rounded-xl py-12 text-center">
+          <p className="text-sm text-muted-foreground">Não foi possível carregar as operações.</p>
+          <button
+            onClick={() => setReloadKey(k => k + 1)}
+            className="mt-3 inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold border border-border rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            Tentar novamente
+          </button>
         </div>
       ) : (
         <div className="bg-white border border-border rounded-xl overflow-hidden">
