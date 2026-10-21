@@ -49,7 +49,7 @@ const semPagina = { email: 'sp@psx.test', role: 'user', allowed_pages: ['cliente
 const titulo = (extra = {}) => ({ id: 't1', status: 'pendente', valor_face: 1000, ...extra });
 const operacao = (extra = {}) => ({
   id: 'op1',
-  etapa: 'nova',
+  etapa: 'rascunho',
   client_id: 'c1',
   produto: 'cheque',
   total_receivable: 1000,
@@ -102,7 +102,7 @@ function driver(op, titulos = [], contexto = {}) {
   async function aplicar(decisao, acao, motivo = '') {
     if (!decisao.permitida) return { ok: false, status: decisao.status, erro: decisao.motivo, bloqueios: decisao.bloqueios };
     const filtro = { id: estado.op.id, $or: [{ etapa: decisao.etapaAtual }] };
-    if (decisao.etapaAtual === 'nova') filtro.$or.push({ etapa: { $exists: false } });
+    if (decisao.etapaAtual === 'rascunho') filtro.$or.push({ etapa: { $exists: false } });
     const res = await store.Operation.updateMany(filtro, { $set: { etapa: decisao.destino } });
     if (!res.updated) return { ok: false, status: 409, erro: 'A operação mudou de etapa durante a solicitação.' };
     if (decisao.cancelar.length) await store.Cheque.updateMany({ id: { $in: decisao.cancelar }, status: 'pendente' }, { $set: { status: 'cancelado' } });
@@ -125,14 +125,14 @@ const contextoPadrao = { cliente: { status: 'ativo', credit_limit: 0 }, config: 
 // ── M5.1 — todas as transições válidas de avanço ────────────────────────────
 test('M5.1 avança por todas as etapas válidas até finalizada', async () => {
   const d = driver(operacao({ etapa: 'rascunho', payment_executed: true }), [titulo()], contextoPadrao);
-  const esperado = ['nova', 'analise_credito', 'confirmacao_titulos', 'formalizacao', 'assinatura', 'pagamento', 'finalizada'];
+  const esperado = ['analise_credito', 'confirmacao_titulos', 'formalizacao', 'assinatura', 'pagamento', 'finalizada'];
   for (const etapa of esperado) {
     const r = await d.transicionar({ usuario: operador, acao: ACOES.AVANCAR });
     assert.equal(r.ok, true, r.erro);
     assert.equal(r.etapa, etapa);
   }
   assert.equal(d.estado.op.etapa, 'finalizada');
-  assert.equal(d.logs.length, 7);
+  assert.equal(d.logs.length, 6);
 });
 
 // ── M5.2 — transições inválidas ─────────────────────────────────────────────
@@ -140,9 +140,9 @@ test('M5.2 recusa transições inválidas e etapas fora da tabela', () => {
   const casos = [
     { op: operacao({ etapa: 'finalizada' }), acao: ACOES.AVANCAR },
     { op: operacao({ etapa: 'finalizada' }), acao: ACOES.REJEITAR },
-    { op: operacao({ etapa: 'nova' }), acao: ACOES.REABRIR },
+    { op: operacao({ etapa: 'rascunho' }), acao: ACOES.REABRIR },
     { op: operacao({ etapa: 'rascunho' }), acao: ACOES.VOLTAR_RASCUNHO },
-    { op: operacao({ etapa: 'nova' }), acao: 'estornar_tudo' },
+    { op: operacao({ etapa: 'analise_credito' }), acao: 'estornar_tudo' },
     { op: operacao({ etapa: 'inexistente' }), acao: ACOES.AVANCAR },
   ];
   for (const c of casos) {
@@ -150,14 +150,14 @@ test('M5.2 recusa transições inválidas e etapas fora da tabela', () => {
     assert.equal(r.permitida, false, `${c.acao} em ${c.op.etapa}`);
     assert.equal(r.status, 409);
   }
-  assert.equal(normalizarEtapa(undefined), 'nova');
+  assert.equal(normalizarEtapa(undefined), 'rascunho');
   assert.equal(normalizarEtapa('rascunho'), 'rascunho');
   assert.equal(normalizarEtapa('qualquer'), 'desconhecida');
 });
 
 // ── M5.3 — pré-requisitos comerciais e documentais ──────────────────────────
 test('M5.3 bloqueia avanço sem os pré-requisitos da etapa', () => {
-  const semTitulo = avaliarTransicao({ operacao: operacao({ etapa: 'nova' }), titulos: [], contexto: contextoPadrao, usuario: operador, acao: ACOES.AVANCAR });
+  const semTitulo = avaliarTransicao({ operacao: operacao({ etapa: 'rascunho' }), titulos: [], contexto: contextoPadrao, usuario: operador, acao: ACOES.AVANCAR });
   assert.equal(semTitulo.permitida, false);
   assert.match(semTitulo.motivo, /título/i);
 
@@ -180,14 +180,13 @@ test('M5.3 bloqueia avanço sem os pré-requisitos da etapa', () => {
   assert.equal(limite.permitida, false);
   assert.match(limite.motivo, /Limite/i);
 
-  const agendaIncompleta = avaliarTransicao({ operacao: operacao({ etapa: 'confirmacao_titulos', installment_schedule: [{ due_date: '2026-11-20' }] }), titulos: [titulo()], contexto: contextoPadrao, usuario: operador, acao: ACOES.AVANCAR });
-  assert.equal(agendaIncompleta.permitida, false);
-  assert.match(agendaIncompleta.motivo, /agenda/i);
+  // Agenda de parcelas e documentação do cedente não travam mais a passagem.
+  const semAgenda = avaliarTransicao({ operacao: operacao({ etapa: 'confirmacao_titulos', installment_schedule: [] }), titulos: [titulo()], contexto: contextoPadrao, usuario: operador, acao: ACOES.AVANCAR });
+  assert.equal(semAgenda.permitida, true);
 
-  // Documentação incompleta é AVISO, não bloqueio (regra preservada do sistema).
-  const comAviso = avaliarTransicao({ operacao: operacao({ etapa: 'analise_credito' }), titulos: [titulo()], contexto: { cliente: { status: 'ativo', credit_limit: 0 }, config: { validate_cpf_cnpj: true }, exposicao: 0 }, usuario: operador, acao: ACOES.AVANCAR });
-  assert.equal(comAviso.permitida, true);
-  assert.equal(comAviso.avisos.length, 1);
+  const semDocumentos = avaliarTransicao({ operacao: operacao({ etapa: 'analise_credito' }), titulos: [titulo()], contexto: { cliente: { status: 'ativo', credit_limit: 0 }, config: { validate_cpf_cnpj: true }, exposicao: 0 }, usuario: operador, acao: ACOES.AVANCAR });
+  assert.equal(semDocumentos.permitida, true);
+  assert.equal(semDocumentos.avisos.length, 0);
 
   // Modalidade sem contrato não pode exigir assinatura.
   const semContratoExigido = avaliarTransicao({ operacao: operacao({ etapa: 'assinatura', needs_contract: false }), titulos: [titulo()], contexto: contextoPadrao, usuario: operador, acao: ACOES.AVANCAR });
@@ -245,7 +244,7 @@ test('M5.5 função de servidor tira identidade do token e ignora papel/etapa do
 
 // ── M5.6 — transições concorrentes ──────────────────────────────────────────
 test('M5.6 duas transições concorrentes: apenas uma vence', async () => {
-  const d = driver(operacao({ etapa: 'nova' }), [titulo()], contextoPadrao);
+  const d = driver(operacao({ etapa: 'rascunho' }), [titulo()], contextoPadrao);
   // Duas requisições simultâneas leem a MESMA etapa antes de qualquer escrita.
   const decisaoA = d.decidir({ usuario: operador, acao: ACOES.AVANCAR });
   const decisaoB = d.decidir({ usuario: operador, acao: ACOES.AVANCAR });
@@ -260,7 +259,7 @@ test('M5.6 duas transições concorrentes: apenas uma vence', async () => {
 
 // ── M5.7 — repetição da mesma solicitação ───────────────────────────────────
 test('M5.7 repetir a mesma transição não avança duas etapas', async () => {
-  const d = driver(operacao({ etapa: 'nova' }), [titulo()], contextoPadrao);
+  const d = driver(operacao({ etapa: 'rascunho' }), [titulo()], contextoPadrao);
   const primeira = await d.transicionar({ usuario: operador, acao: ACOES.AVANCAR });
   const segunda = await d.transicionar({ usuario: operador, acao: ACOES.REJEITAR, motivo: 'cliente desistiu' });
   assert.equal(primeira.ok, true);
@@ -291,7 +290,7 @@ test('M5.8 rejeita operação sem efeitos cancelando apenas títulos pendentes',
   assert.equal(d2.criados.titulos, 0);
   assert.equal(d2.criados.operacoes, 0);
 
-  const semMotivo = avaliarTransicao({ operacao: operacao({ etapa: 'nova' }), titulos: [titulo()], usuario: operador, acao: ACOES.REJEITAR, motivo: 'nao' });
+  const semMotivo = avaliarTransicao({ operacao: operacao({ etapa: 'rascunho' }), titulos: [titulo()], usuario: operador, acao: ACOES.REJEITAR, motivo: 'nao' });
   assert.equal(semMotivo.permitida, false);
   assert.equal(semMotivo.status, 400);
   assert.equal('nao'.length < MOTIVO_MINIMO, true);
@@ -346,7 +345,7 @@ test('M5.10 reabre restaurando só títulos cancelados sem evidência de efeito'
 // ── M5.11 — preservação de documentos e vínculos dos títulos ────────────────
 test('M5.11 transições não recriam títulos nem tocam a agenda de parcelas', async () => {
   const agenda = [{ id: 'p1', due_date: '2026-11-20', total_distribuido: 600 }, { id: 'p2', due_date: '2026-12-20', total_distribuido: 400 }];
-  const d = driver(operacao({ etapa: 'nova', installment_schedule: agenda, contract_url: 'https://doc/1' }), [titulo({ id: 't1' }), titulo({ id: 't2' })], contextoPadrao);
+  const d = driver(operacao({ etapa: 'rascunho', installment_schedule: agenda, contract_url: 'https://doc/1' }), [titulo({ id: 't1' }), titulo({ id: 't2' })], contextoPadrao);
   const antes = JSON.stringify(d.estado.op.installment_schedule);
   await d.transicionar({ usuario: operador, acao: ACOES.AVANCAR });
   await d.transicionar({ usuario: operador, acao: ACOES.AVANCAR });
@@ -369,13 +368,13 @@ test('M5.12 recebimentos do M3 continuam protegidos pelo workflow', () => {
 });
 
 // ── M5.13 — compatibilidade com o M4 ────────────────────────────────────────
-test('M5.13 operações do M4 (agenda com ids, etapa nova) seguem válidas', async () => {
-  const opM4 = { id: 'op1', etapa: 'nova', client_id: 'c1', produto: 'cheque', total_receivable: 1000, amount_paid: 0, balance_due: 1000, installment_schedule: [{ id: 'p1' }, { id: 'p2' }] };
+test('M5.13 operações do M4 (agenda com ids, etapa rascunho) seguem válidas', async () => {
+  const opM4 = { id: 'op1', etapa: 'rascunho', client_id: 'c1', produto: 'cheque', total_receivable: 1000, amount_paid: 0, balance_due: 1000, installment_schedule: [{ id: 'p1' }, { id: 'p2' }] };
   const d = driver(opM4, [titulo()], contextoPadrao);
   const r = await d.transicionar({ usuario: operador, acao: ACOES.AVANCAR });
   assert.equal(r.ok, true, r.erro);
 
-  // Registro antigo sem `etapa` é tratado como "nova" e o CAS o alcança.
+  // Registro antigo sem `etapa` é tratado como rascunho e o CAS o alcança.
   const legado = driver({ id: 'op1', client_id: 'c1', produto: 'cheque', total_receivable: 1000 }, [titulo()], contextoPadrao);
   const rl = await legado.transicionar({ usuario: operador, acao: ACOES.AVANCAR });
   assert.equal(rl.ok, true, rl.erro);

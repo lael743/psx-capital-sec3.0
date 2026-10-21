@@ -39,7 +39,7 @@ export function analiseCredito({ cliente, operacoes = [], titulos = [], hoje }) 
 
   const emAberto = (operacoes || []).filter((o) => o
     && o.status !== 'quitado'
-    && !['rejeitada', 'rascunho', 'finalizada'].includes(o.etapa || 'nova'));
+    && !['rejeitada', 'rascunho', 'finalizada'].includes(o.etapa || 'rascunho'));
   const utilizado = emAberto.reduce(
     (s, o) => s + num(o.balance_due ?? (num(o.total_receivable) - num(o.amount_paid))),
     0,

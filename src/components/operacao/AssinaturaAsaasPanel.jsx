@@ -176,7 +176,7 @@ export default function AssinaturaAsaasPanel({ operacao, onUpdate }) {
                   <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Valor/Ciclo</th>
                   <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wider">Ciclos Pagos</th>
                   <th className="px-3 py-2.5 text-left font-semibold text-muted-foreground uppercase tracking-wider">Próx. Cobrança</th>
-                  <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wider">Status Asaas</th>
+                  <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wider">Situação da cobrança</th>
                   <th className="px-3 py-2.5 text-center font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
                   <th className="px-3 py-2.5"></th>
                 </tr>

@@ -50,7 +50,7 @@ const titulo = (over = {}) => ({
 const operacao = (over = {}) => ({
   id: 'op-1',
   numero_operacao: 5,
-  etapa: 'nova',
+  etapa: 'rascunho',
   produto: 'cheque',
   type: 'cheque',
   client_id: 'c1',
@@ -318,7 +318,7 @@ test('M7.7 assinatura passa em confirmação de títulos com antecipação e ass
 
   // A assinatura também sai da criação sem título.
   const naCriacao = avaliarTransicao({
-    operacao: { ...assinatura, etapa: 'nova' },
+    operacao: { ...assinatura, etapa: 'rascunho' },
     titulos: [],
     contexto: contextoPadrao,
     usuario: operador,
@@ -333,6 +333,7 @@ test('M7.7 assinatura passa em confirmação de títulos com antecipação e ass
   assert.equal(chequeSemTitulo.permitida, false);
   assert.match(chequeSemTitulo.bloqueios.join(' '), /títulos/i);
 
+  // Agenda de parcelas não trava mais a passagem (decisão do usuário).
   const chequeSemAgenda = avaliarTransicao({
     operacao: operacao({ etapa: 'confirmacao_titulos', installment_schedule: [] }),
     titulos: [titulo()],
@@ -340,8 +341,7 @@ test('M7.7 assinatura passa em confirmação de títulos com antecipação e ass
     usuario: operador,
     acao: ACOES.AVANCAR,
   });
-  assert.equal(chequeSemAgenda.permitida, false);
-  assert.match(chequeSemAgenda.bloqueios.join(' '), /agenda/i);
+  assert.equal(chequeSemAgenda.permitida, true);
 });
 
 // ── M7.8 — a execução não autoriza por conta própria ────────────────────────

@@ -15,7 +15,7 @@ const titulo = (extra = {}) => ({
 });
 const operacao = (extra = {}) => ({
   id: 'o1',
-  etapa: 'nova',
+  etapa: 'pagamento',
   status: 'ativo',
   total_receivable: 2000,
   amount_paid: 0,

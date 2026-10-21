@@ -34,7 +34,7 @@ export default function AssinaturaColetaPanel({ operacao, client, onUpdate }) {
   const [newSigner, setNewSigner] = useState({ name: '', cpf_cnpj: '', phone: '', email: '', role: '' });
   const [previewDoc, setPreviewDoc] = useState(null);
 
-  const etapa = operacao?.etapa || 'nova';
+  const etapa = operacao?.etapa || 'rascunho';
   const isLocked = getStageIndex(etapa) < getStageIndex('assinatura');
   const canManage = etapa === 'assinatura';
 

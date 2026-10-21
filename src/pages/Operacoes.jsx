@@ -8,7 +8,6 @@ import EtapaBadge from '@/components/operacao/EtapaBadge';
 const ETAPA_CHIPS = [
   { key: '', label: 'Todas' },
   { key: 'rascunho', label: 'Rascunho' },
-  { key: 'nova', label: 'Nova' },
   { key: 'analise_credito', label: 'Análise de Crédito' },
   { key: 'confirmacao_titulos', label: 'Confirmação de Títulos' },
   { key: 'formalizacao', label: 'Formalização' },
@@ -89,7 +88,7 @@ export default function Operacoes() {
     const counts = {};
     ETAPA_CHIPS.forEach(chip => {
       if (chip.key === '') counts[chip.key] = operations.length;
-      else counts[chip.key] = operations.filter(op => (op.etapa || 'nova') === chip.key).length;
+      else counts[chip.key] = operations.filter(op => (op.etapa || 'rascunho') === chip.key).length;
     });
     return counts;
   }, [operations]);
@@ -102,7 +101,7 @@ export default function Operacoes() {
       const matchSearch = !q ||
         op.client_name?.toLowerCase().includes(q) ||
         opNum.includes(q);
-      const matchEtapa = !filterEtapa || (op.etapa || 'nova') === filterEtapa;
+      const matchEtapa = !filterEtapa || (op.etapa || 'rascunho') === filterEtapa;
       const matchType = !filterType || op.produto === filterType || op.type === filterType;
       const opDate = op.created_date?.split('T')[0];
       const matchDateFrom = !dateFrom || opDate >= dateFrom;
@@ -113,7 +112,7 @@ export default function Operacoes() {
 
   // Totals
   const totals = useMemo(() => {
-    const nonRejected = filtered.filter(o => (o.etapa || 'nova') !== 'rejeitada');
+    const nonRejected = filtered.filter(o => (o.etapa || 'rascunho') !== 'rejeitada');
     const totalBruto = nonRejected.reduce((s, o) => s + (o.total_receivable || 0), 0);
     const totalLiquido = nonRejected.reduce((s, o) => s + (o.net_value || o.gross_value || 0), 0);
     return { count: nonRejected.length, totalBruto, totalDesagio: totalBruto - totalLiquido, totalLiquido };
@@ -321,7 +320,7 @@ export default function Operacoes() {
                       </td>
                       <td className="px-5 py-3.5 text-right font-mono">{formatCurrency(op.total_receivable || 0)}</td>
                       <td className="px-5 py-3.5 text-right font-mono">{formatCurrency(op.net_value || op.gross_value || 0)}</td>
-                      <td className="px-5 py-3.5"><EtapaBadge etapa={op.etapa || 'nova'} /></td>
+                      <td className="px-5 py-3.5"><EtapaBadge etapa={op.etapa || 'rascunho'} /></td>
                       <td className="px-5 py-3.5 text-right">
                         <Link
                           to={`/operacoes/${op.id}`}

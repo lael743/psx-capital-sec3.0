@@ -52,7 +52,7 @@ function criarApi({ falharNoTitulo = 0 } = {}) {
         }
         // O servidor (operacaoEditar → criar) define o estado inicial: o corpo
         // não manda `etapa` nem `status`.
-        const dados = nome === 'Operation' ? { ...d, etapa: 'nova', status: 'ativo', amount_paid: 0 } : d;
+        const dados = nome === 'Operation' ? { ...d, etapa: 'rascunho', status: 'ativo', amount_paid: 0 } : d;
         return col.create(dados);
       },
       updateMany: (q, u) => col.updateWhere(q, u),
@@ -246,14 +246,14 @@ async function criarOperacao(api, { form = formCom(), calcMode = 'inverso', titu
   return { resultado, resumo, payload };
 }
 
-test('M4.6 — criação persiste operação ativa e coerente (não nasce rascunho)', async () => {
+test('M4.6 — criação persiste operação ativa em rascunho', async () => {
   const api = criarApi();
   const { resultado, resumo } = await criarOperacao(api, {
     titulos: [titulo(300, '2026-11-20'), titulo(700, '2026-12-20')],
   });
 
   const op = api.colecoes.Operation.achar(resultado.operationId);
-  assert.equal(op.etapa, 'nova', 'estado inicial coerente com o workflow');
+  assert.equal(op.etapa, 'rascunho', 'toda operação nasce em rascunho');
   assert.equal(op.status, 'ativo');
   assert.equal(op.numero_operacao, 1);
   assert.equal(op.total_receivable, resumo.totalReceivable);

@@ -61,7 +61,7 @@ export async function syncTitulosByOperacaoStatus(op) {
 
   const isPago = op.status === 'quitado';
   const isCancelada = op.etapa === 'rejeitada';
-  const isReaberta = ['rascunho', 'nova'].includes(op.etapa || '');
+  const isReaberta = (op.etapa || '') === 'rascunho';
 
   let targetStatus = null;
   if (isPago) targetStatus = 'compensado';

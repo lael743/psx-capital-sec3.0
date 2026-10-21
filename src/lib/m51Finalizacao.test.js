@@ -88,7 +88,7 @@ test('M5.1.4 — assinatura sem cobrança emitida conclui com AVISO, não com bl
     { temVinculoAssinatura: false },
   );
   assert.equal(decisao.permitida, true, 'o repasse é o pré-requisito; a cobrança é aviso');
-  assert.ok((decisao.avisos || []).some((a) => /Asaas/i.test(a)), 'deve avisar sobre a cobrança');
+  assert.ok((decisao.avisos || []).some((a) => /cobran/i.test(a)), 'deve avisar sobre a cobrança');
 });
 
 test('M5.1.5 — etapa já finalizada não avança de novo (coerência de estado)', () => {
