@@ -1,8 +1,27 @@
 import { Plus, Trash2 } from 'lucide-react';
-import { daysBetween, formatCurrency } from '@/lib/finance';
+import { formatCurrency } from '@/lib/finance';
 import { maskCpfCnpj } from '@/lib/masks';
+import {
+  calcDesagioTitulo, calcTituloRow, calcTitulosTotais,
+} from '@/lib/operacaoCalc';
+
+// M4 — as fórmulas vivem em @/lib/operacaoCalc: a gravação e as telas de resumo
+// usam exatamente as mesmas funções, então cálculo e valor persistido não
+// podem divergir.
+export { calcDesagioTitulo, calcTituloRow, calcTitulosTotais };
+
+function round2(v) { return Math.round(v * 100) / 100; }
+
+/** Chave estável da linha — é a identidade da parcela no cronograma gravado. */
+function novaChave() {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  } catch { /* ambiente sem crypto */ }
+  return `tit-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 export const emptyTitulo = () => ({
+  chave: novaChave(),
   tipo: 'cheque',
   numero: '',
   nf: '',
@@ -12,96 +31,6 @@ export const emptyTitulo = () => ({
   valor_face: '',
   outras_despesas: '',
 });
-
-function round2(v) { return Math.round(v * 100) / 100; }
-
-/**
- * Calcula deságio de um título usando desconto comercial.
- * deságio = valor_face × (taxa/100) × (dias/30)
- * Se arredondarTaxaDiaria, arredonda a taxa diária para 2 casas antes.
- */
-export function calcDesagioTitulo(valorFace, taxaMensal, dias, interestType, arredondarTaxaDiaria) {
-  if (!valorFace || !taxaMensal || !dias || dias <= 0) return 0;
-  if (interestType === 'composto') {
-    const dailyR = arredondarTaxaDiaria
-      ? Math.ceil((taxaMensal / 30) * 100) / 100 / 100
-      : taxaMensal / 100 / 30;
-    return round2(valorFace * (Math.pow(1 + dailyR, dias) - 1));
-  }
-  if (arredondarTaxaDiaria) {
-    const dailyRatePct = Math.ceil((taxaMensal / 30) * 100) / 100;
-    return round2(valorFace * (dailyRatePct / 100) * dias);
-  }
-  return round2(valorFace * (taxaMensal / 100) * (dias / 30));
-}
-
-/**
- * Calcula um título conforme o calcMode:
- * - 'inverso' (Juros Embutido): usuário digita Valor de Face (total a receber);
- *   líquido = face − deságio − outras_despesas
- * - 'padrao': usuário digita Valor Líquido (net); face = líquido / (1 − taxa × dias/30)
- * - 'desconto_direto': usuário digita Valor Líquido (net); face = líquido × (1 + taxa × dias/30)
- *
- * O campo `valor_face` do título armazena o valor DIGITADO pelo usuário.
- * O retorno inclui `valorFace` (face real) e `liquido` (líquido real).
- */
-export function calcTituloRow(titulo, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = 'inverso') {
-  const inputValor = parseFloat(titulo.valor_face) || 0;
-  const outrasDespesas = parseFloat(titulo.outras_despesas) || 0;
-  const dias = titulo.vencimento ? daysBetween(startDate, titulo.vencimento) + (floatDias || 0) : 0;
-
-  let valorFace, desagio, liquido;
-
-  if (calcMode === 'padrao') {
-    // Usuário digita líquido; face = líquido / (1 − taxa × dias/30)
-    liquido = inputValor;
-    const taxaProp = (rate / 100) * (dias / 30);
-    const fator = 1 - taxaProp;
-    valorFace = fator > 0 ? round2(liquido / fator) : liquido;
-    desagio = round2(valorFace - liquido);
-  } else if (calcMode === 'desconto_direto') {
-    // Usuário digita líquido; face = líquido + juros simples
-    liquido = inputValor;
-    const taxaProp = (rate / 100) * (dias / 30);
-    desagio = round2(liquido * taxaProp);
-    valorFace = round2(liquido + desagio);
-  } else if (calcMode === 'emprestimo') {
-    // Empréstimo: parcelas iguais com todas as taxas embutidas na face
-    // valor_face = face igual (pré-calculada), valor_liquido = líquido igual (repasse ÷ parcelas)
-    valorFace = inputValor;
-    liquido = parseFloat(titulo.valor_liquido) || 0;
-    desagio = round2(valorFace - liquido);
-  } else {
-    // inverso: usuário digita face; líquido = face − deságio − outras
-    valorFace = inputValor;
-    desagio = calcDesagioTitulo(valorFace, rate, dias, interestType, arredondarTaxaDiaria);
-    liquido = round2(valorFace - desagio - outrasDespesas);
-  }
-
-  return { dias, desagio, liquido, valorFace };
-}
-
-export function calcTitulosTotais(titulos, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = 'inverso') {
-  let totalFace = 0, totalDesagio = 0, totalOutras = 0, totalLiquido = 0, pesoDias = 0;
-  titulos.forEach((t) => {
-    const { dias, desagio, liquido, valorFace } = calcTituloRow(t, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode);
-    totalFace += valorFace;
-    totalDesagio += desagio;
-    totalOutras += parseFloat(t.outras_despesas) || 0;
-    totalLiquido += liquido;
-    pesoDias += dias * valorFace;
-  });
-  const prazoMedio = totalFace > 0 ? pesoDias / totalFace : 0;
-  const desagioPeriodo = totalFace > 0 ? (totalDesagio / totalFace) * 100 : 0;
-  return {
-    totalFace: round2(totalFace),
-    totalDesagio: round2(totalDesagio),
-    totalOutras: round2(totalOutras),
-    totalLiquido: round2(totalLiquido),
-    prazoMedio,
-    desagioPeriodo,
-  };
-}
 
 /**
  * Total Distribuído total = Total Bruto (total a receber).

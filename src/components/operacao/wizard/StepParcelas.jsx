@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { formatCurrency } from '@/lib/finance';
-import { calcTituloRow, calcTitulosTotais, calcTotalDistribuidoPerParcel, calcTotalDistribuidoTotal } from './TituloInlineTable';
+import { calcTituloRow } from './TituloInlineTable';
+import { resumoFinanceiro } from '@/lib/operacaoCalc';
 import { RefreshCw, AlertTriangle, Calendar } from 'lucide-react';
 
 function addDays(dateStr, days) {
@@ -118,13 +119,11 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
     setTitulos(titulos.map((t, i) => i === idx ? { ...t, vencimento } : t));
   };
 
-  const totals = calcTitulosTotais(titulos, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveCalcMode);
-  const isPadrao = effectiveCalcMode === 'padrao';
-  const validCount = titulos.filter((t) => t.vencimento && parseFloat(t.valor_face) > 0).length;
-  const tarifaOperacao = parseFloat(form.tarifa_operacao) || 0;
-  const tarifaPorTitulo = parseFloat(form.tarifa_por_titulo) || 0;
-  const totalTarifas = tarifaOperacao + (tarifaPorTitulo * titulos.length);
-  const totalDistribuidoTotal = calcTotalDistribuidoTotal(totals.totalFace, totalTarifas, totals.totalOutras, isPadrao);
+  // M4 — mesma função usada na gravação: exibição e persistência não divergem.
+  const resumo = resumoFinanceiro({ titulos, form, calcMode: effectiveCalcMode });
+  const totals = resumo.totals;
+  const validCount = resumo.n;
+  const totalDistribuidoTotal = resumo.totalDistribuidoTotal;
 
   return (
     <div className="space-y-4">
@@ -199,7 +198,7 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
               <tbody className="divide-y divide-border">
                 {titulos.map((t, i) => {
                 const { dias, desagio, liquido, valorFace } = calcTituloRow(t, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveCalcMode);
-                const totalDistribuido = calcTotalDistribuidoPerParcel(totals.totalFace, totalTarifas, totals.totalOutras, titulos.length, isPadrao);
+                const totalDistribuido = resumo.porTitulo[i] ?? 0;
                 return (
                   <tr key={i} className="hover:bg-gray-50/50">
                       <td className="px-3 py-2 font-medium">{t.numero || `${i + 1}/${titulos.length}`}</td>

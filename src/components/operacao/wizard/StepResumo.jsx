@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { ImageDown, FileDown, Loader2 } from 'lucide-react';
 import { formatCurrency, formatDate } from '@/lib/finance';
-import { calcTitulosTotais, calcTituloRow, calcTotalDistribuidoPerParcel, calcTotalDistribuidoTotal } from './TituloInlineTable';
+import { calcTituloRow } from './TituloInlineTable';
+import { resumoFinanceiro } from '@/lib/operacaoCalc';
 import ResumoFinanceiroCard from './ResumoFinanceiroCard';
 import ComprovanteAntecipacao from './ComprovanteAntecipacao';
 import { captureElementAsImage, captureElementAsPdf } from '@/lib/captureElement';
@@ -30,15 +31,15 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
   const isEmprestimo = form.tipo === 'emprestimo';
   const effectiveCalcMode = isEmprestimo ? 'emprestimo' : (form.calculo_inverso ? 'padrao' : calcMode);
 
-  const totals = calcTitulosTotais(titulos, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveCalcMode);
-  const isPadrao = effectiveCalcMode === 'padrao';
-  const tarifaTitulos = tarifaPorTitulo * titulos.length;
-  const totalTarifas = tarifaTitulos + tarifaOperacao;
-  // Padrão: tarifas e outras despesas repassadas ao cedente (somadas ao total a receber), não descontadas do repasse
-  // Empréstimo: taxas embutidas nas parcelas iguais; líquido = repasse
-  const valorLiquido = (isPadrao || isEmprestimo) ? totals.totalLiquido : totals.totalLiquido - totalTarifas;
-  const totalReceivable = isPadrao ? totals.totalFace + totals.totalOutras + totalTarifas : totals.totalFace;
-  const totalDistribuidoTotal = calcTotalDistribuidoTotal(totals.totalFace, totalTarifas, totals.totalOutras, isPadrao);
+  // M4 — mesmo cálculo da gravação (operacaoCalc), não uma cópia.
+  const resumo = resumoFinanceiro({ titulos, form, calcMode: effectiveCalcMode });
+  const totals = resumo.totals;
+  const isPadrao = resumo.isPadrao;
+  const tarifaTitulos = resumo.tarifaTitulos;
+  const totalTarifas = resumo.totalTarifas;
+  const valorLiquido = resumo.valorLiquido;
+  const totalReceivable = resumo.totalReceivable;
+  const totalDistribuidoTotal = resumo.totalDistribuidoTotal;
 
   const sacadosUnicos = [...new Set(titulos.map((t) => t.sacado).filter(Boolean))];
 
@@ -177,7 +178,7 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
                 <tbody className="divide-y divide-border">
                   {titulos.map((t, i) => {
                     const { desagio, liquido, valorFace } = calcTituloRow(t, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveCalcMode);
-                    const totalDistribuido = calcTotalDistribuidoPerParcel(totals.totalFace, totalTarifas, totals.totalOutras, titulos.length, isPadrao);
+                    const totalDistribuido = resumo.porTitulo[i] ?? 0;
                     return (
                       <tr key={i}>
                         <td className="px-3 py-1.5 text-muted-foreground">{i + 1}</td>

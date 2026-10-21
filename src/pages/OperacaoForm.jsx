@@ -1,12 +1,14 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { ViewModeProvider } from '@/lib/viewMode';
-import { ArrowLeft, ArrowRight, Save, FileText, AlertTriangle, X, FileDown } from 'lucide-react';
-import { formatCurrency, daysBetween, today } from '@/lib/finance';
+import { ArrowLeft, ArrowRight, Save, FileText, AlertTriangle, X } from 'lucide-react';
+import { formatCurrency, today } from '@/lib/finance';
 import { logAction } from '@/lib/audit';
 import { bloqueioEdicaoCompleta } from '@/lib/scheduleWrite';
-import { emptyTitulo, calcTitulosTotais, calcTituloRow } from '@/components/operacao/wizard/TituloInlineTable';
+import { resumoFinanceiro, validarOperacao } from '@/lib/operacaoCalc';
+import { montarPayloadOperacao, montarTitulosCheque, salvarOperacao, proximoNumeroOperacao } from '@/lib/operacaoSave';
+import { emptyTitulo } from '@/components/operacao/wizard/TituloInlineTable';
 import WizardStepper from '@/components/operacao/wizard/WizardStepper';
 import StepCedenteProduto from '@/components/operacao/wizard/StepCedenteProduto';
 import StepDigitacaoTitulos from '@/components/operacao/wizard/StepDigitacaoTitulos';
@@ -53,6 +55,10 @@ export default function OperacaoForm() {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [draftBanner, setDraftBanner] = useState(false);
   const [createdId, setCreatedId] = useState(null);
+  // Guarda síncrona: o estado `saving` só desabilita o botão no próximo render,
+  // e um clique repetido nesse intervalo criava a operação duas vezes.
+  const savingRef = useRef(false);
+  const [numeroOperacao, setNumeroOperacao] = useState(null);
 
   const settings = useMemo(() => getSettings(), []);
 
@@ -137,6 +143,9 @@ export default function OperacaoForm() {
       });
       if (chqs.length) {
         setTitulos(chqs.map(c => ({
+          // A chave do título é o id do registro existente: a edição atualiza o
+          // MESMO título em vez de apagar e recriar.
+          chave: c.id,
           tipo: c.tipo || 'cheque',
           numero: c.check_number || '',
           nf: c.nf || '',
@@ -186,7 +195,9 @@ export default function OperacaoForm() {
       const d = JSON.parse(localStorage.getItem(DRAFT_KEY));
       if (d) {
         setForm(d.form);
-        setTitulos(Array.isArray(d.titulos) && d.titulos.length ? d.titulos : [emptyTitulo()]);
+        setTitulos(Array.isArray(d.titulos) && d.titulos.length
+          ? d.titulos.map((t) => ({ ...emptyTitulo(), ...t }))
+          : [emptyTitulo()]);
         setDocumentos(Array.isArray(d.documentos) ? d.documentos : []);
         if (d.form?.client_id) {
           base44.entities.Client.filter({ id: d.form.client_id }, 'name', 1).then((res) => {
@@ -222,32 +233,9 @@ export default function OperacaoForm() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Calculations
-  const rate = parseFloat(form.rate) || 0;
-  const floatDias = parseFloat(form.float_dias) || 0;
-  const tarifaOperacao = parseFloat(form.tarifa_operacao) || 0;
-  const tarifaPorTitulo = parseFloat(form.tarifa_por_titulo) || 0;
-
+  // Cálculo financeiro: uma única fonte (operacaoCalc) para tela e gravação.
   const isEmprestimo = form.tipo === 'emprestimo';
   const effectiveCalcMode = isEmprestimo ? 'emprestimo' : (form.calculo_inverso ? 'padrao' : form.calc_mode);
-  const totals = useMemo(
-    () => calcTitulosTotais(titulos, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveCalcMode),
-    [titulos, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveCalcMode]
-  );
-
-  const isPadrao = form.calc_mode === 'padrao';
-  const tarifaTitulos = tarifaPorTitulo * validTitulos.length;
-  const totalTarifas = tarifaTitulos + tarifaOperacao;
-  // Padrão: tarifas e outras despesas repassadas ao cedente (somadas ao total a receber), não descontadas do repasse
-  // Empréstimo: taxas embutidas nas parcelas iguais; líquido = repasse
-  const valorLiquido = (isPadrao || isEmprestimo) ? totals.totalLiquido : totals.totalLiquido - totalTarifas;
-  const totalReceivable = isPadrao ? totals.totalFace + totals.totalOutras + totalTarifas : totals.totalFace;
-  const projectedProfit = totalReceivable - valorLiquido;
-
-  const lastDueDate = validTitulos
-    .map((t) => t.vencimento)
-    .sort()
-    .slice(-1)[0] || '';
 
   // Safe navigation
   const safeNavigate = (target) => {
@@ -265,6 +253,10 @@ export default function OperacaoForm() {
 
   // Save
   const saveAssinatura = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError('');
     const assinantes = (form.assinatura_sacados || []).filter((a) => a.sacado_name && a.sacado_doc);
     const numAssinantes = assinantes.length;
     const totalPorCiclo = assinantes.reduce((s, a) => s + (parseFloat(a.valor_assinatura) || 0), 0);
@@ -273,11 +265,7 @@ export default function OperacaoForm() {
     const valorAntecipacao = parseFloat(form.valor_antecipacao) || 0;
     const totalReceivable = numCiclos > 0 ? Math.round(totalPorCiclo * numCiclos * 100) / 100 : 0;
 
-    let nextNumber = 0;
-    if (!editId) {
-      const existingOps = await base44.entities.Operation.list('-created_date', 500);
-      nextNumber = existingOps.reduce((max, o) => Math.max(max, o.numero_operacao || 0), 0) + 1;
-    }
+    const nextNumber = editId || createdId ? undefined : await proximoNumeroOperacao(base44);
 
     const payload = {
       client_id: form.client_id,
@@ -285,7 +273,7 @@ export default function OperacaoForm() {
       type: 'assinatura',
       produto: 'assinatura',
       produto_id: form.produto_id || undefined,
-      ...(editId ? {} : { etapa: 'rascunho', numero_operacao: nextNumber }),
+      ...(editId || createdId ? {} : { etapa: 'nova', numero_operacao: nextNumber }),
       calc_mode: 'assinatura',
       rate: parseFloat(form.rate) || 0,
       interest_type: form.interest_type || 'simples',
@@ -315,23 +303,33 @@ export default function OperacaoForm() {
       notes: form.notes || '',
     };
 
-    let operationId = editId;
-    if (editId) {
-      const bloqueio = await bloqueioEdicaoCompleta(base44, editId);
-      if (bloqueio) { setSaveError(bloqueio); setSaving(false); return; }
-      await base44.entities.Operation.update(editId, payload);
-      await base44.entities.AssinaturaVinculo.deleteMany({ operation_id: editId });
-      await logAction({
-        action: 'update', entity: 'Operation', entityId: editId,
-        description: `Operação de assinatura editada para ${selectedClient?.name} — ${numAssinantes} assinantes — ${formatCurrency(valorAntecipacao)} antecipado`
-      });
-    } else {
-      const created = await base44.entities.Operation.create(payload);
-      operationId = created.id;
-      await logAction({
-        action: 'create', entity: 'Operation', entityId: created.id,
-        description: `Operação de assinatura criada para ${selectedClient?.name} — ${numAssinantes} assinantes — ${formatCurrency(valorAntecipacao)} antecipado`
-      });
+    let operationId = editId || createdId;
+    try {
+      if (operationId) {
+        if (editId) {
+          const bloqueio = await bloqueioEdicaoCompleta(base44, editId);
+          if (bloqueio) { setSaveError(bloqueio); return; }
+        }
+        await base44.entities.Operation.update(operationId, payload);
+        await base44.entities.AssinaturaVinculo.deleteMany({ operation_id: operationId });
+        await logAction({
+          action: 'update', entity: 'Operation', entityId: operationId,
+          description: `Operação de assinatura editada para ${selectedClient?.name} — ${numAssinantes} assinantes — ${formatCurrency(valorAntecipacao)} antecipado`
+        });
+      } else {
+        const created = await base44.entities.Operation.create(payload);
+        operationId = created.id;
+        setCreatedId(operationId);
+        await logAction({
+          action: 'create', entity: 'Operation', entityId: created.id,
+          description: `Operação de assinatura criada para ${selectedClient?.name} — ${numAssinantes} assinantes — ${formatCurrency(valorAntecipacao)} antecipado`
+        });
+      }
+    } catch (e) {
+      setSaveError(e?.message || 'Não foi possível salvar a operação de assinatura.');
+      setSaving(false);
+      savingRef.current = false;
+      return;
     }
 
     for (const a of assinantes) {
@@ -371,128 +369,89 @@ export default function OperacaoForm() {
     }
 
     setSaving(false);
+    savingRef.current = false;
     localStorage.removeItem(DRAFT_KEY);
     setIsDirty(false);
+    setDraftBanner(false);
     navigate(`/operacoes/${operationId}`);
   };
 
   const save = async () => {
-    if (!step1Valid || !step2Valid) return;
-    setSaving(true);
-
     if (isAssinatura) {
       await saveAssinatura();
       return;
     }
+    if (savingRef.current) return;
+    if (!step1Valid || !step2Valid) return;
 
     const opType = form.tipo || PRODUTO_TO_TYPE[form.produto] || 'cheque';
     const calcMode = form.calc_mode || PRODUTO_TO_CALCMODE[form.produto] || 'inverso';
     const effectiveSaveCalcMode = form.tipo === 'emprestimo' ? 'emprestimo' : (form.calculo_inverso ? 'padrao' : calcMode);
-    const days = lastDueDate ? daysBetween(form.start_date, lastDueDate) : 0;
 
-    // Generate sequential operation number (only for new operations)
-    let nextNumber = 0;
-    if (!editId) {
-      const existingOps = await base44.entities.Operation.list('-created_date', 500);
-      nextNumber = existingOps.reduce((max, o) => Math.max(max, o.numero_operacao || 0), 0) + 1;
-    }
+    // M4 — resumo ÚNICO (mesma função do resumo exibido): o que se vê é o que se grava.
+    const resumo = resumoFinanceiro({ titulos, form, calcMode: effectiveSaveCalcMode });
+    const erros = validarOperacao({ resumo, form });
+    if (erros.length) { setSaveError(erros[0]); return; }
 
-    const totalTarifasSave = tarifaOperacao + (tarifaPorTitulo * validTitulos.length);
-    const isPadraoSave = effectiveSaveCalcMode === 'padrao';
-    const totalDistribuidoTotalSave = isPadraoSave ? (totals.totalFace || 0) + (totals.totalOutras || 0) + totalTarifasSave : (totals.totalFace || 0);
-    const totalDistribuidoPerParcelSave = validTitulos.length > 0 ? totalDistribuidoTotalSave / validTitulos.length : 0;
-
-    const installmentSchedule = validTitulos.map((t, i) => {
-      const { dias, desagio, liquido, valorFace } = calcTituloRow(t, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveSaveCalcMode);
-      const totalDistribuido = Math.round(totalDistribuidoPerParcelSave * 100) / 100;
-      return {
-        number: i + 1,
-        value: valorFace,
-        principal: liquido,
-        interest: desagio,
-        days: dias,
-        due_date: t.vencimento,
-        total_distribuido: totalDistribuido,
-        status: 'pendente',
-        paid: false,
-      };
-    });
-
-    const payload = {
-      client_id: form.client_id || undefined,
-      client_name: selectedClient?.name || (isEmprestimoSemCedente ? form.sacado_name : '') || '',
-      sacado_id: form.sacado_id || undefined,
-      sacado_name: form.sacado_name || '',
-      type: opType,
-      produto: form.produto,
-      produto_id: form.produto_id || undefined,
-      ...(editId ? {} : { etapa: 'rascunho', numero_operacao: nextNumber }),
-      calc_mode: calcMode,
-      calculo_inverso: form.calculo_inverso || false,
-      rate,
-      interest_type: form.interest_type,
-      start_date: form.start_date,
-      due_date: lastDueDate,
-      days,
-      gross_value: valorLiquido,
-      net_value: valorLiquido,
-      total_receivable: totalReceivable,
-      tarifa_operacao: tarifaOperacao,
-      tarifa_por_titulo: tarifaPorTitulo,
-      float_dias: floatDias,
-      projected_profit: projectedProfit,
-      realized_profit: 0,
-      installments: validTitulos.length,
-      installment_value: totals.totalFace / (validTitulos.length || 1),
-      installment_schedule: installmentSchedule,
-      balance_due: totalReceivable,
-      amount_paid: 0,
-      cheques_compensados_total: 0,
-      status: 'ativo',
-      notes: form.notes || '',
+    const clientName = selectedClient?.name || (isEmprestimoSemCedente ? form.sacado_name : '') || '';
+    const ctx = {
+      startDate: form.start_date,
+      interestType: form.interest_type || 'simples',
+      floatDias: parseFloat(form.float_dias) || 0,
+      arredondar: form.arredondar_taxa_diaria || false,
+      calcMode,
+      calcModeEfetivo: effectiveSaveCalcMode,
+      opType,
+      clientId: form.client_id,
+      clientName,
     };
 
-    let operationId = editId;
-    if (editId) {
-      const bloqueio = await bloqueioEdicaoCompleta(base44, editId);
-      if (bloqueio) { setSaveError(bloqueio); setSaving(false); return; }
-      await base44.entities.Operation.update(editId, payload);
-      await base44.entities.Cheque.deleteMany({ operation_id: editId });
-      await logAction({
-        action: 'update', entity: 'Operation', entityId: editId,
-        description: `Operação editada para ${selectedClient?.name} - ${formatCurrency(valorLiquido)} líquido / ${formatCurrency(totals.totalFace)} bruto`
-      });
-    } else {
-      const created = await base44.entities.Operation.create(payload);
-      operationId = created.id;
-      await logAction({
-        action: 'create', entity: 'Operation', entityId: created.id,
-        description: `Operação criada para ${selectedClient?.name} - ${formatCurrency(valorLiquido)} líquido / ${formatCurrency(totals.totalFace)} bruto`
-      });
-    }
+    savingRef.current = true;
+    setSaving(true);
+    setSaveError('');
 
-    // Create cheques from títulos
-    for (const t of validTitulos) {
-      const { dias, desagio, liquido, valorFace } = calcTituloRow(t, form.start_date, rate, form.interest_type, floatDias, form.arredondar_taxa_diaria, effectiveSaveCalcMode);
-      await base44.entities.Cheque.create({
-        operation_id: operationId,
-        client_id: form.client_id || '',
-        client_name: selectedClient?.name || (isEmprestimoSemCedente ? form.sacado_name : '') || '',
-        sacado_name: t.sacado || '',
-        sacado_doc: t.sacado_doc || '',
-        nf: t.nf || '',
-        tipo: t.tipo,
-        bank_name: t.tipo === 'cheque' ? (t.bank_name || 'Cheque') : 'Boleto',
-        check_number: t.numero || `TIT-${Date.now()}`,
-        value: valorFace,
-        valor_face: valorFace,
-        desagio,
-        liquido,
-        outras_despesas: parseFloat(t.outras_despesas) || 0,
-        dias,
-        compensation_date: t.vencimento,
-        status: 'pendente',
+    // `createdId` é a memória do retry: uma falha parcial NUNCA cria uma segunda
+    // operação — a tentativa seguinte completa a MESMA operação.
+    let operationId = editId || createdId || '';
+    let resultado;
+    try {
+      if (editId) {
+        const bloqueio = await bloqueioEdicaoCompleta(base44, editId);
+        if (bloqueio) { setSaveError(bloqueio); return; }
+      }
+      let numeroLocal = numeroOperacao;
+      if (!operationId) {
+        numeroLocal = await proximoNumeroOperacao(base44);
+        setNumeroOperacao(numeroLocal);
+      }
+
+      const payload = montarPayloadOperacao({ resumo, form, ctx, editando: !!editId, numeroOperacao: numeroLocal });
+      const desejados = montarTitulosCheque({ resumo, ctx, operationId });
+
+      resultado = await salvarOperacao(base44, { operacaoId: operationId, payload, desejados });
+      operationId = resultado.operationId;
+      if (!editId) setCreatedId(operationId);
+
+      if (resultado.bloqueio) { setSaveError(resultado.bloqueio); return; }
+
+      await logAction({
+        action: editId ? 'update' : 'create',
+        entity: 'Operation',
+        entityId: operationId,
+        description: `Operação ${editId ? 'editada' : 'criada'} para ${clientName} - ${formatCurrency(resumo.valorLiquido)} líquido / ${formatCurrency(resumo.totals.totalFace)} bruto`,
       });
+
+      if (resultado.falhas && resultado.falhas.length) {
+        setSaveError(`A operação foi gravada, mas ${resultado.falhas.length} título(s) não puderam ser salvos (${resultado.falhas[0].titulo}). Clique em Confirmar Operação novamente para completar — nada será duplicado.`);
+        return;
+      }
+    } catch (e) {
+      setSaveError(e?.message || 'Não foi possível salvar a operação. Confirme novamente para concluir — nada será duplicado.');
+      return;
+    } finally {
+      // Libera a guarda; o `saving` acompanha o render abaixo.
+      savingRef.current = false;
+      setSaving(false);
     }
 
     // Vincular sacado da operação (boleto/empréstimo) — cria ou busca o cadastro e atualiza a operação
@@ -542,9 +501,12 @@ export default function OperacaoForm() {
       }
     }
 
-    // Save queued documents to OperacaoDocumento entity
+    // Documentos do wizard — idempotente por file_url: um retry não duplica anexo.
     if (documentos.length > 0 && operationId) {
+      const salvos = await base44.entities.OperacaoDocumento.filter({ operation_id: operationId });
+      const jaSalvos = new Set((Array.isArray(salvos) ? salvos : []).map((d) => d.file_url));
       for (const doc of documentos) {
+        if (jaSalvos.has(doc.file_url)) continue;
         await base44.entities.OperacaoDocumento.create({
           operation_id: operationId,
           client_id: form.client_id,
@@ -559,9 +521,9 @@ export default function OperacaoForm() {
       }
     }
 
-    setSaving(false);
     localStorage.removeItem(DRAFT_KEY);
     setIsDirty(false);
+    setDraftBanner(false);
     navigate(`/operacoes/${operationId}`);
   };
 
