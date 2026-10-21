@@ -3,7 +3,7 @@ import { formatCurrency, daysBetween } from '@/lib/finance';
 import { calcTituloRow } from './TituloInlineTable';
 import { resumoFinanceiro } from '@/lib/operacaoCalc';
 import {
-  PRICE, DESAGIO_FACE, FACE_POR_REPASSE, calcModeEfetivo, normalizarCalcMode,
+  PRICE, DESAGIO_FACE, FACE_POR_REPASSE, calcModeEfetivo,
   cronogramaPrice, cronogramaPricePorParcela,
 } from '@/lib/formatosCalculo';
 import { RefreshCw, AlertTriangle, Calendar } from 'lucide-react';
@@ -17,9 +17,10 @@ function addDays(dateStr, days) {
 function round2(v) {return Math.round(v * 100) / 100;}
 
 const CALCMODE_INFO = {
-  inverso: { totalLabel: 'Valor Total a Receber (Face)', hint: 'Digite o valor total a receber (face). O líquido é calculado descontando o deságio de cada parcela conforme o prazo.' },
-  padrao: { totalLabel: 'Valor Líquido Total', hint: 'Digite o valor líquido total (net). O valor de face é calculado no sentido oposto para cada parcela.' },
-  desconto_direto: { totalLabel: 'Valor Líquido Total', hint: 'Digite o valor líquido total. O valor de face é calculado adicionando juros simples por parcela.' },
+  [DESAGIO_FACE]: { totalLabel: 'Valor Total de Face', hint: 'Digite o valor total de face. O deságio de cada parcela é descontado conforme o prazo, e o que sobra é o repasse.' },
+  [FACE_POR_REPASSE]: { totalLabel: 'Repasse Desejado', hint: 'Digite o repasse que o cliente quer receber. O valor de face é calculado: face = repasse ÷ (1 − taxa × dias/30).' },
+  [PRICE]: { totalLabel: 'Repasse Solicitado', hint: 'Tabela Price: o valor é distribuído em parcelas calculadas pela taxa e pelos dias de cada intervalo (a taxa do período é proporcional aos dias).' },
+  desconto_direto: { totalLabel: 'Valor Líquido Total', hint: 'Formato legado: o valor de face é calculado adicionando juros simples por parcela.' },
   capital_desagio: { totalLabel: 'Valor Total', hint: 'Configuração de parcelas de deságio.' }
 };
 
