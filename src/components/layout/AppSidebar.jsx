@@ -54,7 +54,7 @@ const NAV_GROUPS = [
   {
     label: 'Financeiro',
     items: [
-      { label: 'Pagamentos', href: '/pagamentos', icon: 'CreditCard', pageKey: 'pagamentos' },
+      { label: 'Contas a Receber', href: '/pagamentos', icon: 'CreditCard', pageKey: 'pagamentos' },
       { label: 'Fluxo de Caixa', href: '/caixa', icon: 'Wallet', pageKey: 'caixa' },
       { label: 'Cobrança', href: '/cobranca', icon: 'Bell', pageKey: 'cobranca' },
     ],

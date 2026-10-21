@@ -7,7 +7,7 @@ export const ALL_PAGES = [
   { key: 'cheques', label: 'Cheques', href: '/cheques', icon: 'FileCheck' },
   { key: 'boletos', label: 'Boletos', href: '/boletos', icon: 'Receipt' },
   { key: 'simulador', label: 'Simulador', href: '/simulador', icon: 'Calculator' },
-  { key: 'pagamentos', label: 'Pagamentos', href: '/pagamentos', icon: 'CreditCard' },
+  { key: 'pagamentos', label: 'Contas a Receber', href: '/pagamentos', icon: 'CreditCard' },
   { key: 'caixa', label: 'Fluxo de Caixa', href: '/caixa', icon: 'Wallet' },
   { key: 'cobranca', label: 'Cobrança', href: '/cobranca', icon: 'Bell' },
   { key: 'documentos', label: 'Documentos', href: '/documentos', icon: 'FileText' },
