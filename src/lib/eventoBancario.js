@@ -39,6 +39,19 @@ export function registrarRetorno({ bankId, chequeIds, data, destino, observacoes
   return chamar('retorno_banco', { bankId, chequeIds, data, destino, observacoes, eventId });
 }
 
+/**
+ * M6.3 — Ajuste de saldo. `eventId` estável por tentativa: repetir não duplica.
+ * O servidor exige administrador, valida o valor e grava a chave do evento.
+ */
+export function ajustarSaldoConta({ bankId, tipo, valor, motivo, data, eventId }) {
+  return chamar('ajuste_saldo', { bankId, tipo, valor, motivo, data, eventId });
+}
+
+/** M6.3 — Exclusão de conta: o servidor recusa quando há histórico. */
+export function excluirContaBancaria(bankId) {
+  return chamar('excluir_conta', { bankId });
+}
+
 /** Diagnóstico de um evento: saldo aplicado? lançamento existe? */
 export function inspecionarEvento({ bankId, eventKey }) {
   return chamar('inspecionar', { bankId, eventKey });

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { X, Building2 } from 'lucide-react';
+import { montarPayloadCadastro } from '@/lib/bancoCadastro';
 
 const COLORS = ['#1a1a1a', '#1e40af', '#15803d', '#b45309', '#7c3aed', '#be123c', '#0369a1', '#166534'];
 
@@ -12,7 +13,6 @@ export default function BancoFormModal({ banco, onSave, onClose }) {
     account_type: 'corrente',
     pix_key: '',
     initial_balance: '',
-    current_balance: '',
     is_default_repasse: false,
     is_default_lucro: false,
     color: '#1a1a1a',
@@ -23,16 +23,11 @@ export default function BancoFormModal({ banco, onSave, onClose }) {
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // M6.3 — o formulário grava CADASTRO. Saldo só nasce com a conta (saldo
+  // inicial) e, depois disso, só muda por ajuste de saldo no servidor.
   const handleSubmit = (e) => {
     e.preventDefault();
-    const payload = {
-      ...form,
-      initial_balance: parseFloat(form.initial_balance) || 0,
-      current_balance: banco?.id
-        ? parseFloat(form.current_balance) || 0
-        : parseFloat(form.initial_balance) || 0,
-    };
-    onSave(payload);
+    onSave(montarPayloadCadastro({ form, existente: banco }));
   };
 
   return (

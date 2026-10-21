@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { X, Pencil, Trash2, ArrowUpRight, ArrowDownLeft, CreditCard, BarChart3, CheckSquare, Settings, AlignLeft, PlusCircle, Maximize2, Minimize2 } from 'lucide-react';
+import { X, Pencil, Trash2, ArrowUpRight, ArrowDownLeft, CreditCard, BarChart3, CheckSquare, Settings, AlignLeft, PlusCircle, Maximize2, Minimize2, Scale } from 'lucide-react';
 import { formatCurrency } from '@/lib/finance';
 import BancoExtratoTab from '@/components/bancos/BancoExtratoTab';
 import BancoChequeTab from '@/components/bancos/BancoChequeTab';
@@ -7,6 +7,7 @@ import BancoVisaoGeral from '@/components/bancos/BancoVisaoGeral';
 import BancoConciliacao from '@/components/bancos/BancoConciliacao';
 import BancoConfiguracoes from '@/components/bancos/BancoConfiguracoes';
 import LancamentoAvulsoModal from '@/components/bancos/LancamentoAvulsoModal';
+import AjusteSaldoModal from '@/components/bancos/AjusteSaldoModal';
 
 const TABS = [
   { key: 'visao_geral', label: 'Visão Geral', Icon: BarChart3 },
@@ -19,6 +20,7 @@ const TABS = [
 export default function BancoDrawer({ banco, cheques, onClose, onEdit, onDelete, onReload }) {
   const [tab, setTab] = useState('visao_geral');
   const [showLancamento, setShowLancamento] = useState(false);
+  const [showAjuste, setShowAjuste] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
 
   const bancoCheques = cheques.filter(c =>
@@ -39,6 +41,14 @@ export default function BancoDrawer({ banco, cheques, onClose, onEdit, onDelete,
         <LancamentoAvulsoModal
           banco={banco}
           onClose={() => setShowLancamento(false)}
+          onSaved={onReload}
+        />
+      )}
+
+      {showAjuste && (
+        <AjusteSaldoModal
+          banco={banco}
+          onClose={() => setShowAjuste(false)}
           onSaved={onReload}
         />
       )}
@@ -74,6 +84,10 @@ export default function BancoDrawer({ banco, cheques, onClose, onEdit, onDelete,
             <button onClick={() => setShowLancamento(true)} title="Lançamento avulso"
               className="p-2 rounded-lg hover:bg-amber-50 text-muted-foreground hover:text-amber-600 transition-colors">
               <PlusCircle className="w-4 h-4" />
+            </button>
+            <button onClick={() => setShowAjuste(true)} title="Ajuste de saldo"
+              className="p-2 rounded-lg hover:bg-gray-100 text-muted-foreground hover:text-foreground transition-colors">
+              <Scale className="w-4 h-4" />
             </button>
             <button onClick={onEdit} title="Editar"
               className="p-2 rounded-lg hover:bg-gray-100 text-muted-foreground hover:text-foreground transition-colors">

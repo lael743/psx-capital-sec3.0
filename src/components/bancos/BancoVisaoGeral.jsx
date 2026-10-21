@@ -9,6 +9,8 @@ const CATEGORY_LABELS = {
   remessa_banco: 'Remessa',
   transferencia: 'Transferência',
   lucro_prorrogacao: 'Juros Prorrogação',
+  ajuste_saldo: 'Ajuste de Saldo',
+  lancamento_avulso: 'Lançamento Avulso',
   repasse_cliente: 'Repasse Cliente',
   despesa: 'Despesa',
   receita: 'Receita',

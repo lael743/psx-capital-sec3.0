@@ -30,6 +30,11 @@
  * não bloqueia ninguém hoje: nenhuma tela expõe essas três ações — elas
  * existiam apenas como exportação de código, sem botão.
  *
+ * M6.3 — AJUSTAR_SALDO e EXCLUIR_CONTA também são administrativas. Antes, o
+ * saldo era sobrescrito pelo formulário de cadastro e a conta era apagada pelo
+ * navegador, por qualquer usuário com a página liberada. Corrigir o saldo
+ * oficial e apagar uma conta passam a exigir administrador, decidido aqui.
+ *
  * M3 — recebimento manual e baixa manual entraram como ações OPERACIONAIS: as
  * duas telas que as disparam (Operações, Cedentes e Cobrança) continuam
  * podendo registrar recebimento. O que muda é que agora a autorização é
@@ -54,6 +59,9 @@ export const ACOES_BANCARIAS = Object.freeze({
   // D4.2 — eventos de caixa migrados para o servidor.
   LANCAR: 'lancar',
   REMESSA: 'remessa',
+  // M6.3 — correção de saldo e exclusão de conta: atos administrativos.
+  AJUSTAR_SALDO: 'ajustar_saldo',
+  EXCLUIR_CONTA: 'excluir_conta',
   // M1 — compensação e estorno de cheque migrados para o servidor.
   COMPENSAR_CHEQUE: 'compensar_cheque',
   ESTORNAR_CHEQUE: 'estornar_cheque',
@@ -133,6 +141,10 @@ const ADMINISTRATIVAS = Object.freeze([
   ACOES_BANCARIAS.DEVOLVER_CHEQUE_EXCECAO,
   ACOES_BANCARIAS.ESTORNAR_RESOLUCAO,
   ACOES_BANCARIAS.RECUPERAR_TAXA_CHEQUE,
+  // M6.3 — corrigir o saldo oficial e excluir conta são atos administrativos:
+  // não existe tela que os conceda a operador, e a decisão é do servidor.
+  ACOES_BANCARIAS.AJUSTAR_SALDO,
+  ACOES_BANCARIAS.EXCLUIR_CONTA,
 ]);
 
 /** Ações de recebimento (M3) — mensagem própria na recusa por página. */

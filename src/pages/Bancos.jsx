@@ -9,6 +9,7 @@ import BancoListaCompacta from '@/components/bancos/BancoListaCompacta';
 import BancoDrawer from '@/components/bancos/BancoDrawer';
 import BancosInstituicoes from '@/components/bancos/BancosInstituicoes';
 import { fetchAll } from '@/lib/fetchAll';
+import { excluirContaBancaria } from '@/lib/eventoBancario';
 
 export default function Bancos() {
   const [tab, setTab] = useState('minhas');
@@ -18,6 +19,7 @@ export default function Bancos() {
   const [modal, setModal] = useState({ open: false, banco: null });
   const [confirm, setConfirm] = useState({ open: false, id: null });
   const [showTransferencia, setShowTransferencia] = useState(false);
+  const [erroExclusao, setErroExclusao] = useState('');
   const [selectedBanco, setSelectedBanco] = useState(null);
 
   const load = async () => {
@@ -47,8 +49,17 @@ export default function Bancos() {
     load();
   };
 
+  // M6.3 — a exclusão passa pelo servidor: conta com movimentação é recusada
+  // (a alternativa é arquivar) e a autorização é decidida pelo perfil.
   const handleDelete = async (id) => {
-    await base44.entities.Banco.delete(id);
+    setErroExclusao('');
+    try {
+      await excluirContaBancaria(id);
+    } catch (e) {
+      setConfirm({ open: false, id: null });
+      setErroExclusao(e.message || 'Não foi possível remover a conta.');
+      return;
+    }
     setConfirm({ open: false, id: null });
     if (selectedBanco?.id === id) setSelectedBanco(null);
     load();
@@ -106,7 +117,7 @@ export default function Bancos() {
           <ConfirmDialog
             open={confirm.open}
             title="Remover Banco"
-            message="Tem certeza que deseja remover este banco? Esta ação não pode ser desfeita."
+            message="Tem certeza que deseja remover este banco? Esta ação não pode ser desfeita. Contas com movimentação registrada não podem ser removidas — desative-as para arquivar."
             confirmLabel="Remover"
             variant="danger"
             onConfirm={() => handleDelete(confirm.id)}
@@ -136,6 +147,13 @@ export default function Bancos() {
               </button>
             </div>
           </div>
+
+          {erroExclusao && (
+            <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-xs font-medium text-red-700">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{erroExclusao}</span>
+            </div>
+          )}
 
           {/* KPIs — ocultos quando drawer estiver aberto */}
           {!selectedBanco && (

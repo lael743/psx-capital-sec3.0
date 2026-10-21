@@ -33,6 +33,9 @@
  * `lucro_prorrogacao:<cheque>:<data>:<valor>` — determinística pelo negócio:
  *   a mesma prorrogação pode gerar lucros distintos em datas distintas.
  * `remessa_banco:<eventId>` / `cheque_devolvido:<eventId>` — controle.
+ * `ajuste_saldo:<eventId>` — correção de saldo declarada por administrador
+ *   (M6.3). É evento COM saldo: vale a mesma garantia de aplicação única e o
+ *   mesmo diagnóstico de falha parcial dos demais.
  *
  * ── CÓPIA DUPLICADA ────────────────────────────────────────────────────────
  *
@@ -41,7 +44,7 @@
  * `bankLedger`; o teste D4.2.14 compara os bytes depois de normalizar essa
  * linha. Alterar a regra em um só lado é alterar o comportamento real.
  */
-import { applyBankDelta, claimBankEvent, chaveEvento, LEDGER_KEYS_FIELD } from './bankLedger.js';
+import { applyBankDelta, claimBankEvent, chaveEvento, LEDGER_KEYS_FIELD, CLAIMS_FIELD } from './bankLedger.js';
 
 export { chaveEvento };
 
@@ -54,7 +57,7 @@ export const FORMAS_PAGAMENTO = Object.freeze(['pix', 'dinheiro', 'transferencia
 export const DESTINOS_RETORNO = Object.freeze(['tesouraria', 'financeiro', 'em_maos']);
 
 /** Eventos que movem saldo — os únicos em que `applied_ledger_keys` importa. */
-const EVENTOS_COM_SALDO = new Set(['lancamento_avulso', 'lucro_prorrogacao']);
+const EVENTOS_COM_SALDO = new Set(['lancamento_avulso', 'lucro_prorrogacao', 'ajuste_saldo']);
 
 /** Tipo do evento = prefixo da chave. `lucro_prorrogacao:a:b:c` → lucro_prorrogacao. */
 export function tipoDoEvento(eventKey) {
@@ -73,6 +76,17 @@ export function chaveLancamentoAvulso(eventId) {
 
 export function chaveLucroProrrogacao(chequeId, data, valor) {
   return chaveEvento('lucro_prorrogacao', `${chequeId}:${data}:${Number(valor)}`);
+}
+
+/**
+ * M6.3 — Ajuste de saldo: correção declarada, com identidade própria.
+ *
+ * `eventId` é estável por TENTATIVA (gerado ao abrir o modal): repetir o clique
+ * é o mesmo evento. Duas correções de mesmo valor, feitas de propósito, são
+ * dois eventos e somam — por isso a chave não deriva de valor+data.
+ */
+export function chaveAjusteSaldo(eventId) {
+  return chaveEvento('ajuste_saldo', eventId);
 }
 
 export function chaveRemessa(eventId) {
@@ -97,6 +111,19 @@ export function validarLancamentoAvulso({ tipo, valor, motivo, data }) {
   return null;
 }
 
+/**
+ * M6.3 — Um ajuste de saldo é uma CORREÇÃO, não uma venda nem um recebimento.
+ *
+ * As regras de valor e data são as mesmas de qualquer evento de caixa (valor
+ * finito e maior que zero, data real, justificativa com pelo menos 5
+ * caracteres), aplicadas no SERVIDOR: a tela pode ser contornada, esta função
+ * não. A justificativa é o que torna o ajuste auditável — por isso é exigida
+ * aqui, e não apenas no formulário.
+ */
+export function validarAjuste({ tipo, valor, motivo, data }) {
+  return validarLancamentoAvulso({ tipo, valor, motivo, data });
+}
+
 export function validarLucro({ valor, data, forma }) {
   const v = Number(valor);
   if (!Number.isFinite(v) || v <= 0) return 'O valor deve ser maior que zero.';
@@ -111,6 +138,40 @@ export function validarLote({ chequeIds, data }) {
   if (chequeIds.some((id) => typeof id !== 'string' || !id)) return 'Lista de cheques inválida.';
   if (!data || Number.isNaN(Date.parse(data))) return 'Data inválida.';
   return null;
+}
+
+/**
+ * M6.3 — PODE esta conta ser EXCLUÍDA?
+ *
+ * Uma conta com qualquer vestígio de movimentação não é excluível: apagar o
+ * documento levaria junto a prova do evento (`applied_ledger_keys`, as
+ * reivindicações pendentes) e deixaria lançamentos órfãos no extrato. A saída
+ * é ARQUIVAR (`active: false`), que preserva o histórico e tira a conta das
+ * listas ativas.
+ *
+ * Função PURA: recebe o que foi lido e devolve o veredito. Não apaga nada.
+ */
+export function avaliarExclusaoConta({ banco, lancamentos = [], cheques = [], transferencias = [] } = {}) {
+  if (!banco) return { permitido: false, motivo: 'Conta não encontrada.', evidencias: null };
+
+  const evidencias = {
+    eventos_de_saldo: Array.isArray(banco[LEDGER_KEYS_FIELD]) ? banco[LEDGER_KEYS_FIELD].length : 0,
+    reivindicacoes: Array.isArray(banco[CLAIMS_FIELD]) ? banco[CLAIMS_FIELD].length : 0,
+    lancamentos: (lancamentos || []).length,
+    cheques: (cheques || []).length,
+    transferencias: (transferencias || []).length,
+  };
+  const total = Object.values(evidencias).reduce((soma, n) => soma + n, 0);
+
+  if (total > 0) {
+    return {
+      permitido: false,
+      motivo: 'Esta conta possui movimentação registrada e não pode ser excluída. Desative-a para arquivar, preservando o histórico.',
+      evidencias,
+    };
+  }
+
+  return { permitido: true, motivo: null, evidencias };
 }
 
 export function idDeEventoValido(eventId) {

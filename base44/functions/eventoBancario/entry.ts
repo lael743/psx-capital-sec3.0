@@ -6,6 +6,9 @@
  *   · lucro_prorrogacao   — recebimento do lucro de uma prorrogação;
  *   · remessa_banco       — lote de cheques enviado ao banco (custódia);
  *   · retorno_banco       — lote devolvido pelo banco (custódia);
+ *   · ajuste_saldo        — M6.3: correção do saldo oficial, ato administrativo;
+ *   · excluir_conta       — M6.3: exclusão de conta SEM histórico (arquivar é a
+ *                           alternativa quando há movimentação);
  *   · inspecionar         — diagnóstico de um evento (somente leitura).
  *
  * ── ORDEM OBRIGATÓRIA ──────────────────────────────────────────────────────
@@ -31,9 +34,12 @@ import {
   chaveLucroProrrogacao,
   chaveRemessa,
   chaveRetorno,
+  chaveAjusteSaldo,
   validarLancamentoAvulso,
   validarLucro,
   validarLote,
+  validarAjuste,
+  avaliarExclusaoConta,
   idDeEventoValido,
   DESTINOS_RETORNO,
   TIPOS,
@@ -45,6 +51,8 @@ const ACAO_POR_OPERACAO = {
   lucro_prorrogacao: ACOES_BANCARIAS.LANCAR,
   remessa_banco: ACOES_BANCARIAS.REMESSA,
   retorno_banco: ACOES_BANCARIAS.REMESSA,
+  ajuste_saldo: ACOES_BANCARIAS.AJUSTAR_SALDO,
+  excluir_conta: ACOES_BANCARIAS.EXCLUIR_CONTA,
   inspecionar: ACOES_BANCARIAS.INSPECIONAR,
 };
 
@@ -266,7 +274,85 @@ export default async function (req) {
       return ok({ status: res.status, cashflow_id: res.cashflow_id || null, event_key: eventKey });
     }
 
-    // ── 6. INSPEÇÃO (somente leitura) ──────────────────────────────────────
+    // ── 6. AJUSTE DE SALDO (M6.3 — ato administrativo) ─────────────────────
+    if (operacao === 'ajuste_saldo') {
+      const bancoId = texto(body.bankId, 60);
+      const eventId = texto(body.eventId, 120);
+      const tipo = texto(body.tipo, 10);
+      const valor = Number(body.valor);
+      const motivo = texto(body.motivo, 300);
+      const data = texto(body.data, 10);
+
+      if (!bancoId) return falha('Conta é obrigatória.');
+      if (!idDeEventoValido(eventId)) return falha('Identificador do evento inválido.');
+
+      const erro = validarAjuste({ tipo, valor, motivo, data });
+      if (erro) return falha(erro);
+
+      const banco = await servico.entities.Banco.get(bancoId).catch(() => null);
+      if (!banco) return falha('Conta não encontrada.', 404);
+
+      // Mesmo mecanismo dos demais eventos de saldo: incremento atômico com a
+      // chave gravada na MESMA escrita. A chave é a identidade do AJUSTE, então
+      // repetir a requisição devolve 409 e não soma de novo.
+      const eventKey = chaveAjusteSaldo(eventId);
+      const res = await registrarMovimento({
+        bancoStore,
+        cashflowStore,
+        bankId: banco.id,
+        delta: tipo === TIPOS.ENTRADA ? valor : -valor,
+        eventKey,
+        lancamento: {
+          type: tipo,
+          category: 'ajuste_saldo',
+          amount: valor,
+          date: data,
+          description: `[Ajuste de Saldo] ${banco.name} — ${motivo} (por ${userEmail})`,
+          method: 'outro',
+          bank_id: banco.id,
+        },
+      });
+
+      if (res.status === 'ja_aplicado') {
+        return falha('Este ajuste já foi aplicado nesta conta.', 409);
+      }
+
+      return ok({ status: res.status, cashflow_id: res.cashflow_id || null, event_key: eventKey });
+    }
+
+    // ── 7. EXCLUSÃO DE CONTA SEM HISTÓRICO (M6.3 — administrativo) ─────────
+    if (operacao === 'excluir_conta') {
+      const bancoId = texto(body.bankId, 60);
+      if (!bancoId) return falha('Conta é obrigatória.');
+
+      const banco = await servico.entities.Banco.get(bancoId).catch(() => null);
+      if (!banco) return falha('Conta não encontrada.', 404);
+
+      // Histórico é conferido NO SERVIDOR: apagar a conta levaria junto a prova
+      // dos eventos e deixaria lançamentos órfãos no extrato.
+      const [lancamentos, cheques, transferencias] = await Promise.all([
+        servico.entities.CashFlow.filter({ bank_id: banco.id }).catch(() => []),
+        servico.entities.Cheque.filter({ deposited_bank_id: banco.id }).catch(() => []),
+        servico.entities.TransferenciaBancaria
+          .filter({ $or: [{ from_bank_id: banco.id }, { to_bank_id: banco.id }] })
+          .catch(() => []),
+      ]);
+
+      const lista = (r) => (Array.isArray(r) ? r : (r && r.items) || []);
+      const veredito = avaliarExclusaoConta({
+        banco,
+        lancamentos: lista(lancamentos),
+        cheques: lista(cheques),
+        transferencias: lista(transferencias),
+      });
+
+      if (!veredito.permitido) return falha(veredito.motivo, 409);
+
+      await servico.entities.Banco.delete(banco.id);
+      return ok({ conta_id: banco.id, excluida: true });
+    }
+
+    // ── 8. INSPEÇÃO (somente leitura) ──────────────────────────────────────
     if (operacao === 'inspecionar') {
       const bancoId = texto(body.bankId, 60);
       const eventKey = texto(body.eventKey, 140);
