@@ -60,7 +60,7 @@
         "rejeitada"
       ],
       "default": "nova",
-      "description": "Etapa do workflow da opera\u00e7\u00e3o"
+      "description": "Etapa do workflow da opera\u00e7\u00e3o. M5.1 \u2014 S\u00d3 muda pela autoridade de workflow (fun\u00e7\u00e3o workflowOperacao), com autoriza\u00e7\u00e3o, pr\u00e9-requisitos, compare-and-swap e di\u00e1rio de transi\u00e7\u00e3o. A escrita direta pelo navegador est\u00e1 fechada nas regras de acesso; a autoridade do servidor usa credencial de servi\u00e7o."
     },
     "gross_value": {
       "type": "number",
@@ -223,7 +223,8 @@
         "atrasado",
         "inadimplente"
       ],
-      "default": "ativo"
+      "default": "ativo",
+      "description": "M5.1 \u2014 S\u00f3 muda pela autoridade competente: workflowOperacao (transi\u00e7\u00f5es), executeOperationDisbursement (repasse \u2192 repasse_concluido), canais de recebimento no servidor (quitado/atrasado/inadimplente) e a confirma\u00e7\u00e3o de contrato (operacaoEditar). A escrita direta pelo navegador est\u00e1 fechada nas regras de acesso."
     },
     "notificacao_status": {
       "type": "string",
@@ -324,7 +325,7 @@
     "payment_executed": {
       "type": "boolean",
       "default": false,
-      "description": "Se o pagamento/repasse foi executado ao cliente"
+      "description": "M5.1 \u2014 Prova de REPASSE: gravado por executeOperationDisbursement, na mesma execu\u00e7\u00e3o que debita o banco e lan\u00e7a o caixa. \u00c9 a \u00danica evid\u00eancia aceita para concluir a opera\u00e7\u00e3o (pagamento \u2192 finalizada) em TODAS as modalidades. Emiss\u00e3o de cobran\u00e7a/assinatura Asaas N\u00c3O substitui este campo."
     },
     "payment_execution_date": {
       "type": "string",
@@ -427,46 +428,13 @@
       ]
     },
     "create": {
-      "$or": [
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        },
-        {
-          "user_condition": {
-            "role": "user"
-          }
-        }
-      ]
+      "created_by_id": "___somente_servidor___"
     },
     "update": {
-      "$or": [
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        },
-        {
-          "user_condition": {
-            "role": "user"
-          }
-        }
-      ]
+      "created_by_id": "___somente_servidor___"
     },
     "delete": {
-      "$or": [
-        {
-          "user_condition": {
-            "role": "admin"
-          }
-        },
-        {
-          "user_condition": {
-            "role": "user"
-          }
-        }
-      ]
+      "created_by_id": "___somente_servidor___"
     }
   }
 }
