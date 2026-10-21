@@ -11,7 +11,9 @@ import ResumoAssinatura from './ResumoAssinatura';
 const STORAGE_KEY = 'psx_company_settings';
 const getSettings = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; } };
 
-import { calcModeEfetivo, labelCalcMode } from '@/lib/formatosCalculo';
+import { calcModeEfetivo, labelCalcMode, PRICE } from '@/lib/formatosCalculo';
+import { linhasPriceDeTitulos } from '@/lib/priceOperacao';
+import ParcelasPriceTable from './ParcelasPriceTable';
 
 export default function StepResumo({ form, setForm, selectedClient, titulos, documentos, onGerarPDF, onConfirm, saving }) {
   const comprovanteRef = useRef(null);
@@ -32,6 +34,17 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
   const valorLiquido = resumo.valorLiquido;
   const totalReceivable = resumo.totalReceivable;
   const totalDistribuidoTotal = resumo.totalDistribuidoTotal;
+  const isPrice = effectiveCalcMode === PRICE;
+  // Parcelado: a tabela do resumo é a MESMA da etapa de Parcelas.
+  const priceData = isPrice
+    ? linhasPriceDeTitulos(titulos, {
+      startDate: form.start_date,
+      taxaMensalPct: rate,
+      interestType: form.interest_type,
+      tarifaOperacao,
+      tarifaPorTitulo
+    })
+    : null;
 
   const sacadosUnicos = [...new Set(titulos.map((t) => t.sacado).filter(Boolean))];
 
@@ -155,6 +168,12 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
             <div className="bg-gray-50 px-4 py-2.5 border-b border-border">
               <h4 className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{form.tipo === 'cheque' ? 'Títulos' : 'Parcelas'} ({titulos.length})</h4>
             </div>
+            {isPrice &&
+            <div className="p-3">
+                <ParcelasPriceTable linhas={priceData.linhas} totais={priceData.totais} />
+              </div>
+            }
+            {!isPrice &&
             <div className="max-h-48 overflow-y-auto">
               <table className="w-full text-xs">
                 <thead className="bg-white sticky top-0">
@@ -185,6 +204,7 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
                 </tbody>
               </table>
             </div>
+            }
           </div>
         </div>
 
@@ -199,6 +219,7 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
             valorLiquido={valorLiquido}
             prazoMedio={totals.prazoMedio}
             desagioPeriodo={totals.desagioPeriodo}
+            taxaEfetiva={resumo.taxaEfetiva}
           />
         </div>
       </div>

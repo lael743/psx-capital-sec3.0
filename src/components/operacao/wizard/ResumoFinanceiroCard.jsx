@@ -1,6 +1,6 @@
 import { formatCurrency } from '@/lib/finance';
 
-export default function ResumoFinanceiroCard({ totalBruto, totalDesagio, tarifaOperacao, tarifaTitulos, totalOutras, valorLiquido, prazoMedio, desagioPeriodo }) {
+export default function ResumoFinanceiroCard({ totalBruto, totalDesagio, tarifaOperacao, tarifaTitulos, totalOutras, valorLiquido, prazoMedio, desagioPeriodo, taxaEfetiva = 0 }) {
   const rows = [
     { label: 'Total Bruto', value: formatCurrency(totalBruto), sign: '+' },
     { label: 'Deságio', value: formatCurrency(totalDesagio), sign: '−', color: 'text-red-600' },
@@ -37,6 +37,10 @@ export default function ResumoFinanceiroCard({ totalBruto, totalDesagio, tarifaO
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>Deságio Período</span>
             <span className="font-semibold text-foreground">{desagioPeriodo.toFixed(2)}%</span>
+          </div>
+          <div className="flex items-center justify-between text-xs text-muted-foreground">
+            <span>Taxa Efetiva</span>
+            <span className="font-semibold text-foreground">{taxaEfetiva.toFixed(2)}% a.m.</span>
           </div>
         </div>
       </div>

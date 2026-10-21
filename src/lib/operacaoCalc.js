@@ -199,6 +199,14 @@ export function resumoFinanceiro({ titulos, form, calcMode }) {
 
   const installmentValue = n > 0 ? round2(totalReceivable / n) : 0;
 
+  // TAXA EFETIVA (a.m.): o juro realmente cobrado, concentrado no prazo médio
+  // ponderado e convertido para 30 dias. É diferente do "deságio do período",
+  // que é o total sobre a face no prazo inteiro — os dois indicadores são
+  // derivados dos MESMOS títulos, nunca de um recálculo paralelo.
+  const taxaEfetiva = (totals.prazoMedio > 0 && totals.totalLiquido > 0 && totals.totalDesagio > 0)
+    ? round2((Math.pow(1 + totals.totalDesagio / totals.totalLiquido, 30 / totals.prazoMedio) - 1) * 100)
+    : 0;
+
   return {
     titulos: validos,
     n,
@@ -215,6 +223,7 @@ export function resumoFinanceiro({ titulos, form, calcMode }) {
     porTitulo,
     totalDistribuidoTotal: totalReceivable,
     installmentValue,
+    taxaEfetiva,
     isPadrao,
     repasseConhecido,
     isEmprestimo,
