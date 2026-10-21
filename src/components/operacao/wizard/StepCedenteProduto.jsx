@@ -13,7 +13,7 @@ const CALCMODE_LABEL = {
   capital_desagio: 'Capital + Deságio',
 };
 
-export default function StepCedenteProduto({ form, setForm, selectedClient, setSelectedClient, clients, clientUsedLimit, setClientUsedLimit, settings }) {
+export default function StepCedenteProduto({ form, setForm, selectedClient, setSelectedClient, clients, clientUsedLimit, setClientUsedLimit, settings, onNovoCedente }) {
   const [touched, setTouched] = useState({});
   const [produtos, setProdutos] = useState([]);
   const [loadingProdutos, setLoadingProdutos] = useState(true);
@@ -87,7 +87,8 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
         <ClienteSearchInput
           clients={clients}
           selectedClient={selectedClient}
-          onSelect={handleClientSelect} />
+          onSelect={handleClientSelect}
+          onCreateNew={onNovoCedente} />
 
         {(form.tipo === 'emprestimo' && form.calc_mode !== 'capital_desagio' && form.produto !== 'capital_desagio') && !selectedClient && (
           <p className="text-xs text-blue-600 mt-1.5">Empréstimo sem cedente — negociação direta com o sacado.</p>

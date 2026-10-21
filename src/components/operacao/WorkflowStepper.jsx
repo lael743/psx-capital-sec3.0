@@ -1,13 +1,17 @@
 import { Check } from 'lucide-react';
-import { STAGES, getStageIndex } from '@/lib/operationWorkflow';
+import { STAGES } from '@/lib/operationWorkflow';
+
+/** As 7 etapas da operação. "Rascunho" é o estado anterior ao fluxo, não uma etapa. */
+const ETAPAS = STAGES.filter((s) => s.key !== 'rascunho');
 
 export default function WorkflowStepper({ currentEtapa }) {
-  const currentIndex = getStageIndex(currentEtapa);
+  const efetiva = currentEtapa === 'rascunho' ? 'nova' : currentEtapa;
+  const currentIndex = ETAPAS.findIndex((s) => s.key === efetiva);
 
   return (
     <div className="bg-white border border-border rounded-xl p-4 overflow-x-auto">
       <div className="flex items-center gap-0 min-w-max">
-        {STAGES.map((stage, i) => {
+        {ETAPAS.map((stage, i) => {
           const isCompleted = i < currentIndex;
           const isCurrent = i === currentIndex;
           const isRejected = currentEtapa === 'rejeitada' && i === currentIndex;
@@ -27,7 +31,7 @@ export default function WorkflowStepper({ currentEtapa }) {
                   isCurrent ? 'text-foreground' : isCompleted ? 'text-emerald-600' : 'text-muted-foreground'
                 }`}>{stage.label}</span>
               </div>
-              {i < STAGES.length - 1 && (
+              {i < ETAPAS.length - 1 && (
                 <div className={`h-0.5 w-6 ${isCompleted ? 'bg-emerald-500' : 'bg-border'}`} />
               )}
             </div>

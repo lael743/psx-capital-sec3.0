@@ -2,7 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { Search, Plus, UserCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
-export default function ClienteSearchInput({ clients, selectedClient, onSelect, nextRef }) {
+export default function ClienteSearchInput({ clients, selectedClient, onSelect, nextRef, onCreateNew }) {
+  // Cadastro rápido sem sair da tela: quando o pai oferece `onCreateNew`, o
+  // botão abre o drawer em vez de navegar para a página de clientes.
+  const abrirCadastro = () => (onCreateNew ? onCreateNew() : navigate('/clientes/novo'));
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -93,7 +96,7 @@ export default function ClienteSearchInput({ clients, selectedClient, onSelect, 
         </div>
         <button
           type="button"
-          onClick={() => navigate('/clientes/novo')}
+          onClick={abrirCadastro}
           className="flex items-center gap-1.5 px-3 py-2 text-xs font-medium border border-border rounded-lg hover:bg-gray-50 transition-colors whitespace-nowrap"
           title="Criar novo cliente"
         >
@@ -126,7 +129,7 @@ export default function ClienteSearchInput({ clients, selectedClient, onSelect, 
       {open && query.length > 1 && filtered.length === 0 && (
         <div className="absolute z-50 mt-1 w-full bg-white border border-border rounded-xl shadow-lg p-4 text-sm text-muted-foreground text-center">
           Nenhum cliente encontrado.{' '}
-          <button type="button" className="text-foreground font-medium underline" onClick={() => navigate('/clientes/novo')}>
+          <button type="button" className="text-foreground font-medium underline" onClick={abrirCadastro}>
             Criar novo?
           </button>
         </div>

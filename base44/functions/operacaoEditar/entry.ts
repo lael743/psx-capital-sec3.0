@@ -13,7 +13,7 @@
  *     RECUSADOS nesta função: só mudam por `workflowOperacao` (etapa) e
  *     `executeOperationDisbursement` (repasse). É o que impede a tela — ou uma
  *     chamada direta — de reescrever o estado do workflow.
- *  4. Criação nasce sempre em `etapa: 'nova'` / `status: 'ativo'`, qualquer que
+ *  4. Criação nasce sempre em `etapa: 'rascunho'` / `status: 'ativo'`, qualquer que
  *     seja o corpo: não existe operação criada já "finalizada".
  *  5. `onde` permite gravação condicional (ex.: amount_paid observado), devolvendo
  *     conflito em vez de sobrescrever recebimento.
@@ -101,13 +101,13 @@ export default async function (req) {
       const tentouProtegido = recusados.filter((c) => ['etapa', 'status'].includes(c));
       if (tentouProtegido.length > 0) {
         return falha(
-          `A criação não define ${tentouProtegido.map((c) => ROTULO_PROTEGIDO[c]).join(' / ')}: toda operação nasce em "nova" e ativa.`,
+          `A criação não define ${tentouProtegido.map((c) => ROTULO_PROTEGIDO[c]).join(' / ')}: toda operação nasce em "rascunho" e ativa.`,
           403,
         );
       }
       const criada = await servico.entities.Operation.create({
         ...limpos,
-        etapa: 'nova',
+        etapa: 'rascunho',
         status: 'ativo',
         amount_paid: 0,
         balance_due: limpos.total_receivable !== undefined ? limpos.total_receivable : limpos.balance_due,
@@ -115,8 +115,8 @@ export default async function (req) {
       await registrarAuditoria(servico, usuario, {
         action: 'operacao_criada',
         operacaoId: criada.id,
-        description: `Operação #${String(criada.numero_operacao || criada.id.slice(-6)).padStart(6, '0')} criada (etapa "nova" definida pelo servidor).`,
-        after: { etapa: 'nova', status: 'ativo' },
+        description: `Operação #${String(criada.numero_operacao || criada.id.slice(-6)).padStart(6, '0')} criada como RASCUNHO (etapa definida pelo servidor).`,
+        after: { etapa: 'rascunho', status: 'ativo' },
       });
       return Response.json({ ok: true, operacao: criada });
     }

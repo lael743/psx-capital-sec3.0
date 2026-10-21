@@ -17,6 +17,7 @@ import StepDocumentos from '@/components/operacao/wizard/StepDocumentos';
 import StepResumo from '@/components/operacao/wizard/StepResumo';
 import StepParcelas from '@/components/operacao/wizard/StepParcelas';
 import StepAssinatura from '@/components/operacao/wizard/StepAssinatura';
+import NovoCedenteDrawer from '@/components/cedente/NovoCedenteDrawer';
 
 const STORAGE_KEY = 'psx_company_settings';
 const DRAFT_KEY = 'psx_operacao_wizard_draft';
@@ -56,6 +57,9 @@ export default function OperacaoForm() {
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [draftBanner, setDraftBanner] = useState(false);
   const [createdId, setCreatedId] = useState(null);
+  // Cadastro rápido de cedente em DRAWER: a criação da operação não perde o
+  // contexto (nada de navegar para outra tela e voltar).
+  const [showNovoCedente, setShowNovoCedente] = useState(false);
   // Guarda síncrona: o estado `saving` só desabilita o botão no próximo render,
   // e um clique repetido nesse intervalo criava a operação duas vezes.
   const savingRef = useRef(false);
@@ -209,6 +213,15 @@ export default function OperacaoForm() {
         setIsDirty(true);
       }
     } catch {}
+  };
+
+  /** Cedente cadastrado no drawer: entra na lista e já fica selecionado. */
+  const handleCedenteCriado = (novo) => {
+    setClients((lista) => [novo, ...lista]);
+    setSelectedClient(novo);
+    setForm((f) => ({ ...f, client_id: novo.id, rate: novo.default_rate || f.rate }));
+    setClientUsedLimit(0);
+    setIsDirty(true);
   };
 
   // Step validation
@@ -543,6 +556,12 @@ export default function OperacaoForm() {
   return (
     <ViewModeProvider initialMode="interno">
       <div className="p-4 md:p-6 h-full flex flex-col bg-gray-50/50 min-h-screen">
+        <NovoCedenteDrawer
+          open={showNovoCedente}
+          onOpenChange={setShowNovoCedente}
+          onCreated={handleCedenteCriado}
+        />
+
         {/* Exit confirm */}
         {showExitConfirm && (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -626,6 +645,7 @@ export default function OperacaoForm() {
                 clientUsedLimit={clientUsedLimit}
                 setClientUsedLimit={setClientUsedLimit}
                 settings={settings}
+                onNovoCedente={() => setShowNovoCedente(true)}
               />
             )}
             {step === 2 && (
@@ -691,7 +711,7 @@ export default function OperacaoForm() {
                   disabled={saving || !!form.assinatura_simulacao}
                   className="inline-flex items-center gap-2 px-5 py-2 bg-emerald-600 text-white text-sm font-semibold rounded-lg hover:bg-emerald-700 disabled:opacity-60 transition-colors"
                 >
-                  <Save className="w-4 h-4" /> {form.assinatura_simulacao ? 'Simulação — não confirmável' : (saving ? 'Confirmando...' : 'Confirmar Operação')}
+                  <Save className="w-4 h-4" /> {form.assinatura_simulacao ? 'Simulação — não confirmável' : (saving ? 'Salvando...' : editId ? 'Salvar alterações' : 'Salvar rascunho')}
                 </button>
               )}
             </div>

@@ -84,7 +84,7 @@ export default function WorkflowActions({ operacao, onUpdate }) {
         {podeAvancar && (
           <Btn
             onClick={() => executar(ACOES.AVANCAR)}
-            label={`Enviar para ${nextStage.label}`}
+            label={etapa === 'rascunho' ? 'Iniciar fluxo da operação' : `Enviar para ${nextStage.label}`}
             icon={Send}
             color="border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
           />

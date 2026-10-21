@@ -1,42 +1,41 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
-import { ArrowLeft, DollarSign, MessageCircle, Plus, CheckCircle, AlertTriangle, Receipt, Clock, CalendarClock, ScrollText, FileText, Building2, TrendingUp, CreditCard } from 'lucide-react';
-import ProrrogarChequeModal from '@/components/cheque/ProrrogarChequeModal';
-import ChequeDevolvidoModal from '@/components/cheque/ChequeDevolvidoModal';
-import ContratoModal from '@/components/operacao/ContratoModal';
-import ContratoAssinadoPanel from '@/components/operacao/ContratoAssinadoPanel';
-import NotificacaoStatusCard from '@/components/operacao/NotificacaoStatusCard';
-import CessaoVinculoPanel from '@/components/operacao/CessaoVinculoPanel';
-import StatusBadge from '@/components/ui/StatusBadge';
+import { ArrowLeft, MessageCircle, AlertTriangle } from 'lucide-react';
 import EtapaBadge from '@/components/operacao/EtapaBadge';
+import StatusBadge from '@/components/ui/StatusBadge';
 import WorkflowActions from '@/components/operacao/WorkflowActions';
 import WorkflowStepper from '@/components/operacao/WorkflowStepper';
 import OperacaoResumoSidebar from '@/components/operacao/OperacaoResumoSidebar';
-import { DataTable, TableHead, Th, TableBody, Tr, Td, EmptyRow } from '@/components/ui/DataTable';
+import EtapaResumo from '@/components/operacao/etapas/EtapaResumo';
+import EtapaAnalise from '@/components/operacao/etapas/EtapaAnalise';
+import EtapaTitulos from '@/components/operacao/etapas/EtapaTitulos';
+import EtapaDocumentos from '@/components/operacao/etapas/EtapaDocumentos';
+import EtapaAssinaturas from '@/components/operacao/etapas/EtapaAssinaturas';
+import EtapaPagamento from '@/components/operacao/etapas/EtapaPagamento';
+import EtapaFinal from '@/components/operacao/etapas/EtapaFinal';
 import { formatCurrency, formatDate, daysOverdue } from '@/lib/finance';
-import { logAction } from '@/lib/audit';
-import { syncTitulosByOperacaoStatus } from '@/lib/syncCheque';
-import { registrarRecebimento, novaChaveRecebimento } from '@/lib/recebimentoOps';
 import { ViewModeProvider } from '@/lib/viewMode';
-import ConfirmDialog from '@/components/ui/ConfirmDialog';
-import ReciboModal from '@/components/ui/ReciboModal';
-import AdicionarTituloModal from '@/components/operacao/AdicionarTituloModal';
-import EditarCondicoesModal from '@/components/operacao/EditarCondicoesModal';
-import AssinaturaColetaPanel from '@/components/operacao/AssinaturaColetaPanel';
-import BancariosTab from '@/components/operacao/BancariosTab';
-import RepassePanel from '@/components/operacao/RepassePanel';
-import OperacaoDocumentosPanel from '@/components/operacao/OperacaoDocumentosPanel';
-import AsaasChargeCard from '@/components/asaas/AsaasChargeCard';
-import SacadoInfoCard from '@/components/operacao/SacadoInfoCard';
-import AssinaturaAsaasPanel from '@/components/operacao/AssinaturaAsaasPanel';
 
-const STORAGE_KEY = 'psx_company_settings';
-function getSettings() {
-  try {return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');} catch {return {};}
-}
+/**
+ * A operação é conduzida POR ETAPAS: cada etapa tem a sua própria tela, e não
+ * abas de conveniência. A etapa atual vem do workflow (autoridade do servidor),
+ * o resumo financeiro acompanha em todas elas e nenhuma baixa de título ou
+ * parcela acontece aqui — isso é da Central de Contas a Receber.
+ */
+const TELAS = {
+  rascunho: EtapaResumo,
+  nova: EtapaResumo,
+  analise_credito: EtapaAnalise,
+  confirmacao_titulos: EtapaTitulos,
+  formalizacao: EtapaDocumentos,
+  assinatura: EtapaAssinaturas,
+  pagamento: EtapaPagamento,
+  finalizada: EtapaFinal,
+};
 
-const PRODUTO_LABEL = { cheque: 'Cheque', boleto: 'Duplicata', capital_desagio: 'Capital + Deságio', emprestimo: 'Empréstimo', assinatura: 'Assinatura' };
+/** Etapas em que o conteúdo da operação ainda pode ser ajustado. */
+const EDICAO_LIBERADA = ['rascunho', 'nova', 'analise_credito', 'confirmacao_titulos', 'formalizacao'];
 
 export default function OperacaoDetail() {
   const { id } = useParams();
@@ -47,36 +46,20 @@ export default function OperacaoDetail() {
   const [cheques, setCheques] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState('titulos');
-  const [paymentForm, setPaymentForm] = useState({ amount: '', payment_date: new Date().toISOString().split('T')[0], method: 'pix', notes: '' });
-  const [savingPayment, setSavingPayment] = useState(false);
-  // M3 — identidade do evento de recebimento (reusada no retry) e erro inline.
-  const [paymentKey, setPaymentKey] = useState(null);
-  const [paymentError, setPaymentError] = useState('');
-  const [confirm, setConfirm] = useState({ open: false, title: '', message: '', onConfirm: null, variant: 'default' });
-  const [reciboData, setReciboData] = useState({ open: false, payment: null });
-  const [showContrato, setShowContrato] = useState(false);
-  const [prorrogarCheque, setProrrogarCheque] = useState(null);
-  const [resolverDevolvido, setResolverDevolvido] = useState(null);
-  const [showAddTitulo, setShowAddTitulo] = useState(false);
-  const [showEditarCondicoes, setShowEditarCondicoes] = useState(false);
-
-  const settings = getSettings();
 
   const load = () => {
     Promise.all([
-    base44.entities.Operation.get(id),
-    base44.entities.Payment.filter({ operation_id: id }),
-    base44.entities.Cheque.filter({ operation_id: id }),
-    base44.entities.AuditLog.filter({ entity_id: id }, '-created_date', 50).catch(() => [])]
-    ).then(([operation, pmts, chqs, logs]) => {
+      base44.entities.Operation.get(id),
+      base44.entities.Payment.filter({ operation_id: id }),
+      base44.entities.Cheque.filter({ operation_id: id }),
+      base44.entities.AuditLog.filter({ entity_id: id }, '-created_date', 50).catch(() => []),
+    ]).then(([operation, pmts, chqs, logs]) => {
       setOp(operation);
       setPayments(pmts);
       setCheques(chqs);
       setAuditLogs(logs || []);
-      if (operation?.type === 'assinatura') setTab('assinatura_asaas');
       if (operation?.client_id) {
-        base44.entities.Client.get(operation.client_id).then(setClient);
+        base44.entities.Client.get(operation.client_id).then(setClient).catch(() => setClient(null));
       }
       setLoading(false);
     }).catch(() => {
@@ -85,140 +68,38 @@ export default function OperacaoDetail() {
     });
   };
 
-  useEffect(() => {load();}, [id]);
-
-  /**
-   * M3 — o recebimento é aplicado NO SERVIDOR (`recebimentoManual`).
-   *
-   * Antes esta tela lia `amount_paid`, somava em memória e regravava, junto com
-   * `balance_due`, `status` e `realized_profit`: um cheque ou um pagamento
-   * Asaas concorrente era apagado sem erro nenhum.
-   *
-   * A chave do evento é fixada UMA vez por tentativa e reenviada igual em cada
-   * retry — é o que impede que uma falha de rede some o recebimento duas vezes.
-   */
-  const doRegisterPayment = async () => {
-    if (!paymentForm.amount || !op) return;
-    setSavingPayment(true);
-    setPaymentError('');
-    const amount = parseFloat(paymentForm.amount);
-    const chave = paymentKey || novaChaveRecebimento('manual');
-    setPaymentKey(chave);
-
-    try {
-      const r = await registrarRecebimento({
-        operationId: id,
-        valor: amount,
-        data: paymentForm.payment_date,
-        metodo: paymentForm.method,
-        observacao: paymentForm.notes,
-        origem: 'manual',
-        chave,
-      });
-      setPaymentKey(null);
-
-      const paymentRecord = {
-        ...(r.pagamento || {}),
-        amount,
-        payment_date: paymentForm.payment_date,
-        method: paymentForm.method,
-        notes: paymentForm.notes,
-        client_name: op.client_name,
-      };
-      // Visão só para exibição — o estado gravado é o que o servidor devolveu.
-      const operationView = {
-        ...op,
-        amount_paid: (op.amount_paid || 0) + (r.valor_aplicado || 0),
-        balance_due: r.saldo_em_aberto,
-        status: r.status,
-        realized_profit: r.realized_profit,
-      };
-
-      if (r.status === 'quitado') { await syncTitulosByOperacaoStatus(operationView); }
-      await logAction({ action: 'payment', entity: 'Operation', entityId: id, description: `Pagamento de ${formatCurrency(amount)} registrado para ${op.client_name}` });
-
-      setPaymentForm({ amount: '', payment_date: new Date().toISOString().split('T')[0], method: 'pix', notes: '' });
-      setSavingPayment(false);
-      load();
-      const show = settings.show_receipt_after_payment !== false;
-      if (show) setReciboData({ open: true, payment: paymentRecord, operation: operationView });
-    } catch (e) {
-      // A chave é PRESERVADA: o retry reenvia o mesmo evento e o servidor
-      // completa o que faltou sem somar de novo.
-      setSavingPayment(false);
-      setPaymentError(e.message || 'Não foi possível registrar o recebimento.');
-    }
-  };
-
-  const registerPayment = () => {
-    if (!paymentForm.amount) return;
-    const amount = parseFloat(paymentForm.amount);
-    const useConfirm = settings.show_confirm_dialogs !== false;
-    if (useConfirm) {
-      setConfirm({ open: true, title: 'Confirmar Recebimento', message: `Registrar recebimento de ${formatCurrency(amount)} via ${paymentForm.method?.toUpperCase()}?`, onConfirm: () => {setConfirm((c) => ({ ...c, open: false }));doRegisterPayment();}, variant: 'default' });
-    } else {doRegisterPayment();}
-  };
-
-  const generateWaMessage = (type) => {
-    if (!client || !op) return;
-    const msgs = {
-      cobranca: `Olá ${client.name}! Passando para lembrar que você possui um débito de *${formatCurrency((op.total_receivable || 0) - (op.amount_paid || 0))}* com vencimento em *${formatDate(op.due_date)}* conosco. Por favor, entre em contato para regularizar. Obrigado!`,
-      vencimento: `Olá ${client.name}! Informamos que sua operação no valor de *${formatCurrency(op.total_receivable)}* vence em *${formatDate(op.due_date)}*. Aguardamos seu pagamento!`
-    };
-    const text = encodeURIComponent(msgs[type]);
-    const num = client.whatsapp?.replace(/\D/g, '') || client.phone?.replace(/\D/g, '');
-    if (num) window.open(`https://wa.me/55${num}?text=${text}`, '_blank');
-  };
+  useEffect(() => { load(); }, [id]);
 
   if (loading) return (
     <div className="flex items-center justify-center h-64">
       <div className="w-6 h-6 border-2 border-border border-t-foreground rounded-full animate-spin" />
-    </div>);
+    </div>
+  );
 
   if (!op) return <div className="p-6 text-center text-muted-foreground">Operação não encontrada.</div>;
 
+  const etapa = op.etapa || 'rascunho';
+  const isFinalizada = etapa === 'finalizada';
+  const isRejected = etapa === 'rejeitada';
+  const podeEditar = !isRejected && EDICAO_LIBERADA.includes(etapa);
+  const Tela = TELAS[etapa] || EtapaResumo;
   const overdue = daysOverdue(op.due_date);
   const balance = op.balance_due ?? ((op.total_receivable || 0) - (op.amount_paid || 0));
-  const isFinalizada = op.etapa === 'finalizada';
-  const isRejected = op.etapa === 'rejeitada';
-  const canManageTitulos = !isRejected && ['rascunho', 'nova', 'analise_credito', 'confirmacao_titulos', 'formalizacao'].includes(op.etapa || 'rascunho');
   const opNum = op.numero_operacao ? `#${String(op.numero_operacao).padStart(6, '0')}` : `#${id.slice(-6).toUpperCase()}`;
-  const produtoLabel = PRODUTO_LABEL[op.produto || op.type] || 'Operação';
-  const titulosAtivos = cheques.filter((c) => c.status === 'pendente' || c.status === 'compensado').length;
 
-  const tabs = [
-  { key: 'titulos', label: 'Títulos' },
-  ...(op.type === 'assinatura' ? [{ key: 'assinatura_asaas', label: 'Assinatura Asaas' }] : []),
-  { key: 'pagamentos', label: 'Pagamentos' },
-  { key: 'parcelas', label: 'Parcelas' },
-  { key: 'bancarios', label: 'Bancários' },
-  { key: 'assinaturas', label: 'Assinaturas' },
-  { key: 'documentos', label: 'Documentos' },
-  ...(op.needs_contract ? [{ key: 'contrato', label: 'Contrato' }] : []),
-  { key: 'historico', label: 'Histórico' }];
-
-
-  const summaryCards = [
-  { icon: FileText, label: 'Tipo', value: produtoLabel },
-  { icon: Clock, label: 'Prazo Médio', value: `${op.days || 0} dias` },
-  { icon: TrendingUp, label: 'Taxa Deságio', value: `${op.rate || 0}% a.m.` },
-  { icon: Receipt, label: 'Títulos', value: `${titulosAtivos} ${titulosAtivos === 1 ? 'ativo' : 'ativos'}` },
-  { icon: Building2, label: 'Cedente', value: op.client_name || '—', sub: client?.document },
-  { icon: CreditCard, label: 'Financeiro', value: formatCurrency(op.total_receivable || 0), sub: `Líquido ${formatCurrency(op.net_value || op.gross_value || 0)}` }];
-
+  const cobrar = () => {
+    if (!client) return;
+    const texto = encodeURIComponent(
+      `Olá ${client.name}! Passando para lembrar que você possui um débito de ${formatCurrency(balance)} conosco, com vencimento em ${formatDate(op.due_date)}. Por favor, entre em contato para regularizar. Obrigado!`,
+    );
+    const num = (client.whatsapp || client.phone || '').replace(/\D/g, '');
+    if (num) window.open(`https://wa.me/55${num}?text=${texto}`, '_blank');
+  };
 
   return (
     <ViewModeProvider initialMode="interno">
       <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-4">
-        <ConfirmDialog open={confirm.open} title={confirm.title} message={confirm.message} confirmLabel="Confirmar" variant={confirm.variant} onConfirm={confirm.onConfirm} onCancel={() => setConfirm((c) => ({ ...c, open: false }))} />
-        {prorrogarCheque && <ProrrogarChequeModal cheque={prorrogarCheque} onClose={() => setProrrogarCheque(null)} onSaved={load} />}
-        {resolverDevolvido && <ChequeDevolvidoModal cheque={resolverDevolvido} onClose={() => setResolverDevolvido(null)} onSaved={load} />}
-        {showContrato && <ContratoModal operacao={{ ...op, cheques_data: cheques }} client={client} onClose={() => setShowContrato(false)} />}
-        <ReciboModal open={reciboData.open} payment={reciboData.payment} operation={reciboData.operation || op} client={client} companyName={settings.company_name} onClose={() => setReciboData({ open: false, payment: null })} />
-        {showAddTitulo && <AdicionarTituloModal operacao={op} cheques={cheques} onClose={() => setShowAddTitulo(false)} onSaved={() => {setShowAddTitulo(false);load();}} />}
-        {showEditarCondicoes && <EditarCondicoesModal operacao={op} cheques={cheques} onClose={() => setShowEditarCondicoes(false)} onSaved={() => {setShowEditarCondicoes(false);load();}} />}
-
-        {/* Header */}
+        {/* Cabeçalho */}
         <div className="flex items-start gap-3 flex-wrap">
           <button onClick={() => navigate('/operacoes')} className="p-2 rounded-lg hover:bg-gray-100 transition-colors">
             <ArrowLeft className="w-4 h-4" />
@@ -226,290 +107,68 @@ export default function OperacaoDetail() {
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 flex-wrap">
               <h1 className="text-xl font-bold">Operação {opNum}</h1>
-              <EtapaBadge etapa={op.etapa || 'nova'} />
+              <EtapaBadge etapa={etapa} />
               <StatusBadge status={op.type} />
             </div>
-            <p className="text-sm text-muted-foreground mt-0.5 truncate">{op.client_name} — {formatDate(op.created_date)}</p>
+            <p className="text-sm text-muted-foreground mt-0.5 truncate">
+              {op.client_name || 'Sem cedente'} — {formatDate(op.created_date)}
+            </p>
           </div>
-          <div className="flex gap-2 flex-wrap">
-            <button onClick={() => navigate(`/contratos?operation_id=${id}`)} className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border border-blue-200 text-blue-700 bg-blue-50 rounded-lg hover:bg-blue-100 transition-colors">
-              <ScrollText className="w-3.5 h-3.5" /> Nota Promissória
+          {isFinalizada && client?.whatsapp && (
+            <button onClick={cobrar} className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border border-emerald-200 text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors">
+              <MessageCircle className="w-3.5 h-3.5" /> Cobrar
             </button>
-            {client?.whatsapp &&
-            <button onClick={() => generateWaMessage('cobranca')} className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border border-emerald-200 text-emerald-600 bg-emerald-50 rounded-lg hover:bg-emerald-100 transition-colors">
-                <MessageCircle className="w-3.5 h-3.5" /> Cobrar
-              </button>
-            }
-          </div>
-        </div>
-
-        {/* Rejected Banner */}
-        {isRejected &&
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
-            <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
-            <div className="flex-1">
-              <span className="text-sm text-red-800 font-semibold">Operação Rejeitada</span>
-              <span className="text-sm text-red-700"> — Esta operação está bloqueada. Não é possível gerar cobranças, registrar pagamentos ou editar títulos.</span>
-            </div>
-          </div>
-        }
-
-        {/* Workflow Stepper */}
-        <WorkflowStepper currentEtapa={op.etapa || 'nova'} />
-
-        {/* Status Controls */}
-        <div className="flex items-center justify-between gap-4 flex-wrap bg-white border border-border rounded-xl p-3">
-          <WorkflowActions operacao={op} onUpdate={load} />
-          
-
-
-
-          
-        </div>
-
-        {/* M7 — repasse ao cedente: registro na etapa "pagamento" */}
-        {(op.etapa || 'nova') === 'pagamento' && <RepassePanel operacao={op} onUpdate={load} />}
-
-        {/* Summary Panel */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-          {summaryCards.map((card) =>
-          <div key={card.label} className="bg-white border border-border rounded-xl p-3 flex items-start gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-gray-50 flex items-center justify-center shrink-0">
-                <card.icon className="w-4 h-4 text-muted-foreground" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">{card.label}</p>
-                <p className="text-sm font-bold truncate">{card.value}</p>
-                {card.sub && <p className="text-[10px] text-muted-foreground truncate">{card.sub}</p>}
-              </div>
-            </div>
           )}
         </div>
 
-        {/* Alerts */}
-        {op.needs_contract && !op.contract_signed_confirmed &&
-        <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-center gap-3">
-            <Clock className="w-5 h-5 text-amber-500 shrink-0" />
+        {isRejected && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
             <div className="flex-1">
-              <span className="text-sm text-amber-800 font-semibold">Aguardando contrato assinado</span>
-              <span className="text-sm text-amber-700"> — O repasse ao cliente está bloqueado até a confirmação.</span>
+              <span className="text-sm text-red-800 font-semibold">Operação rejeitada</span>
+              <span className="text-sm text-red-700"> — bloqueada para edição, cobrança e assinaturas.</span>
             </div>
-            <button onClick={() => setTab('contrato')} className="text-xs font-semibold text-amber-700 underline whitespace-nowrap">Ver contrato →</button>
           </div>
-        }
-        {overdue > 0 && op.status !== 'quitado' && isFinalizada &&
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
+        )}
+
+        <WorkflowStepper currentEtapa={etapa} />
+
+        {!isFinalizada && !isRejected && (
+          <div className="bg-white border border-border rounded-xl p-3">
+            <WorkflowActions operacao={op} onUpdate={load} />
+          </div>
+        )}
+
+        {isFinalizada && overdue > 0 && op.status !== 'quitado' && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 flex items-center gap-3">
             <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
             <div>
               <span className="text-sm text-red-700 font-semibold">{overdue} dias em atraso</span>
               <span className="text-sm text-red-600"> — Saldo devedor: {formatCurrency(balance)}</span>
             </div>
           </div>
-        }
+        )}
 
-        {/* Sacado + Notificação (disponível desde a criação para boletos) */}
-        {op.type === 'boleto' && (op.sacado_name || op.sacado_id) && <SacadoInfoCard operacao={op} onUpdate={load} />}
-        {op.type === 'boleto' && (op.sacado_name || op.sacado_id) && <NotificacaoStatusCard operacao={op} client={client} onUpdate={load} />}
-        {isFinalizada && <CessaoVinculoPanel operacao={op} client={client} />}
-
-        {/* Main Content: Tabs + Sidebar */}
-        <div className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4">
-          <div className="space-y-4">
-            {/* Tabs */}
-            <div className="flex gap-0.5 bg-gray-100 rounded-lg p-1 w-fit overflow-x-auto">
-              {tabs.map((t) =>
-              <button key={t.key} onClick={() => setTab(t.key)} className={`px-4 py-2 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${tab === t.key ? 'bg-white text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-                  {t.label}
-                </button>
-              )}
-            </div>
-
-            {/* Tab: Títulos */}
-            {tab === 'titulos' &&
-            <div className="space-y-3">
-                <div className="flex justify-end">
-                  {canManageTitulos &&
-                <button onClick={() => setShowAddTitulo(true)} className="inline-flex items-center gap-2 px-3 py-2 bg-foreground text-primary-foreground text-xs font-semibold rounded-lg hover:bg-foreground/90 transition-colors">
-                      <Plus className="w-3.5 h-3.5" /> Adicionar Título
-                    </button>
-                }
-                </div>
-                <DataTable>
-                  <TableHead>
-                    <Th>Tipo</Th><Th>Número</Th><Th>Sacado</Th><Th>Venc.</Th><Th right>Dias</Th><Th right>Face</Th><Th right>Deságio</Th><Th right>Desp.</Th><Th right>Líquido</Th><Th>Status</Th><Th />
-                  </TableHead>
-                  <TableBody>
-                    {cheques.map((c) =>
-                  <Tr key={c.id}>
-                        <Td><span className="text-xs font-bold uppercase">{c.tipo === 'cheque' ? 'CHQ' : c.tipo === 'boleto' ? 'BOL' : 'DUP'}</span></Td>
-                        <Td className="text-xs">{c.check_number}{c.nf && <span className="text-muted-foreground"> / NF: {c.nf}</span>}</Td>
-                        <Td className="text-xs">{c.sacado_name || '—'}</Td>
-                        <Td className="text-xs">{formatDate(c.compensation_date)}</Td>
-                        <Td right className="text-xs">{c.dias || '—'}</Td>
-                        <Td right mono className="text-xs">{formatCurrency(c.valor_face || c.value)}</Td>
-                        <Td right mono className="text-xs text-red-600">{formatCurrency(c.desagio || 0)}</Td>
-                        <Td right mono className="text-xs">{formatCurrency(c.outras_despesas || 0)}</Td>
-                        <Td right mono className="text-xs font-semibold">{formatCurrency(c.liquido || 0)}</Td>
-                        <Td><StatusBadge status={c.status} /></Td>
-                        <Td>
-                          <div className="flex items-center gap-1">
-                            {c.status === 'pendente' && <button onClick={() => setProrrogarCheque(c)} className="p-1 rounded hover:bg-blue-50 text-blue-600" title="Prorrogar"><CalendarClock className="w-3.5 h-3.5" /></button>}
-                            {c.status === 'devolvido' && <button onClick={() => setResolverDevolvido(c)} className="p-1 rounded hover:bg-red-50 text-red-600" title="Resolver"><AlertTriangle className="w-3.5 h-3.5" /></button>}
-                          </div>
-                        </Td>
-                      </Tr>
-                  )}
-                    {cheques.length === 0 && <EmptyRow colSpan={11} message="Nenhum título vinculado." />}
-                  </TableBody>
-                </DataTable>
-                {cheques.length > 0 &&
-              <div className="flex justify-end gap-6 text-xs font-semibold border-t border-border pt-2">
-                    <span>Total Face: <span className="font-mono">{formatCurrency(cheques.reduce((s, c) => s + (c.valor_face || c.value || 0), 0))}</span></span>
-                    <span>Total Deságio: <span className="font-mono text-red-600">{formatCurrency(cheques.reduce((s, c) => s + (c.desagio || 0), 0))}</span></span>
-                    <span>Total Líquido: <span className="font-mono text-emerald-600">{formatCurrency(cheques.reduce((s, c) => s + (c.liquido || 0), 0))}</span></span>
-                  </div>
-              }
-              </div>
-            }
-
-            {/* Tab: Pagamentos */}
-            {tab === 'pagamentos' &&
-            <div className="space-y-4">
-                {op.status !== 'quitado' && !isRejected &&
-              <div className="bg-white border border-border rounded-xl p-4 space-y-3">
-                    <h3 className="text-sm font-bold">Registrar Pagamento</h3>
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Valor (R$)</label>
-                        <input className="input-field" type="number" step="0.01" value={paymentForm.amount} onChange={(e) => { setPaymentForm((f) => ({ ...f, amount: e.target.value })); setPaymentKey(null); }} placeholder="0,00" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Data</label>
-                        <input className="input-field" type="date" value={paymentForm.payment_date} onChange={(e) => setPaymentForm((f) => ({ ...f, payment_date: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Método</label>
-                        <select className="input-field" value={paymentForm.method} onChange={(e) => setPaymentForm((f) => ({ ...f, method: e.target.value }))}>
-                          <option value="pix">PIX</option><option value="dinheiro">Dinheiro</option><option value="transferencia">Transferência</option><option value="cheque">Cheque</option>
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-muted-foreground mb-1">Obs.</label>
-                        <input className="input-field" value={paymentForm.notes} onChange={(e) => setPaymentForm((f) => ({ ...f, notes: e.target.value }))} />
-                      </div>
-                    </div>
-                    {paymentError && (
-                      <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{paymentError}</p>
-                    )}
-                    <div className="flex justify-between items-center pt-2 border-t border-border flex-wrap gap-2">
-                      <div className="text-sm text-muted-foreground">Saldo: <strong className="text-foreground">{formatCurrency(balance)}</strong></div>
-                      <button onClick={registerPayment} disabled={savingPayment || !paymentForm.amount} className="inline-flex items-center gap-2 px-4 py-2 bg-foreground text-primary-foreground text-sm font-semibold rounded-lg disabled:opacity-50">
-                        <CheckCircle className="w-4 h-4" /> {savingPayment ? 'Salvando...' : 'Confirmar Pagamento'}
-                      </button>
-                    </div>
-                  </div>
-              }
-                <DataTable>
-                  <TableHead><Th>Data</Th><Th right>Valor</Th><Th>Método</Th><Th>Obs.</Th><Th /></TableHead>
-                  <TableBody>
-                    {payments.map((p) =>
-                  <Tr key={p.id}>
-                        <Td muted className="text-xs">{formatDate(p.payment_date)}</Td>
-                        <Td right mono className="font-semibold text-emerald-600 text-xs">{formatCurrency(p.amount)}</Td>
-                        <Td className="text-xs capitalize">{p.method}</Td>
-                        <Td muted className="text-xs">{p.notes || '—'}</Td>
-                        <Td><button onClick={() => setReciboData({ open: true, payment: p, operation: op })} className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"><Receipt className="w-3.5 h-3.5" /> Recibo</button></Td>
-                      </Tr>
-                  )}
-                    {payments.length === 0 && <EmptyRow colSpan={5} message="Nenhum pagamento registrado." />}
-                  </TableBody>
-                </DataTable>
-              </div>
-            }
-
-            {/* Tab: Parcelas */}
-            {tab === 'parcelas' &&
-            <div className="space-y-4">
-              <DataTable>
-                <TableHead><Th>Parcela</Th><Th right>Valor</Th><Th>Vencimento</Th><Th>Status</Th><Th /></TableHead>
-                <TableBody>
-                  {(op.installment_schedule || []).map((inst, i) =>
-                <Tr key={i}>
-                      <Td className="font-semibold text-xs">{inst.number}ª parcela</Td>
-                      <Td right mono className="text-xs">{formatCurrency(inst.value)}</Td>
-                      <Td className="text-xs">{formatDate(inst.due_date)}</Td>
-                      <Td><StatusBadge status={inst.paid ? 'quitado' : 'pendente'} /></Td>
-                      <Td>{!inst.paid && op.status !== 'quitado' && !isRejected && <button onClick={() => {setPaymentForm((f) => ({ ...f, amount: String(inst.value), notes: `Parcela ${inst.number}` }));setTab('pagamentos');}} className="flex items-center gap-1 text-xs text-[hsl(43,65%,47%)] font-medium"><DollarSign className="w-3.5 h-3.5" /> Baixar</button>}</Td>
-                    </Tr>
-                )}
-                  {(!op.installment_schedule || op.installment_schedule.length === 0) && <EmptyRow colSpan={5} message="Operação à vista (sem parcelas)." />}
-                </TableBody>
-              </DataTable>
-              {!isRejected && <AsaasChargeCard operacao={op} onUpdate={load} />}
-            </div>
-            }
-
-            {/* Tab: Bancários */}
-            {tab === 'bancarios' &&
-            <BancariosTab operacao={op} client={client} onUpdate={load} />
-            }
-
-            {/* Tab: Assinaturas */}
-            {tab === 'assinaturas' && !isRejected &&
-            <AssinaturaColetaPanel operacao={op} client={client} onUpdate={load} />
-            }
-            {tab === 'assinaturas' && isRejected &&
-            <div className="bg-white border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">
-              <AlertTriangle className="w-8 h-8 mx-auto mb-2 text-red-300" />
-              Assinaturas indisponíveis para operações rejeitadas.
-            </div>
-            }
-
-            {/* Tab: Assinatura Asaas */}
-            {tab === 'assinatura_asaas' && op.type === 'assinatura' && !isRejected &&
-            <AssinaturaAsaasPanel operacao={op} onUpdate={load} />
-            }
-            {tab === 'assinatura_asaas' && isRejected &&
-            <div className="bg-white border border-border rounded-xl p-8 text-center text-sm text-muted-foreground">
-              <AlertTriangle className="w-8 h-8 mx-auto mb-2 text-red-300" />
-              Assinaturas indisponíveis para operações rejeitadas.
-            </div>
-            }
-
-            {/* Tab: Documentos */}
-            {tab === 'documentos' &&
-            <div className="bg-white border border-border rounded-xl p-5">
-              <OperacaoDocumentosPanel mode="entity" operacao={op} onUpdate={load} />
-            </div>
-            }
-
-            {/* Tab: Contrato */}
-            {tab === 'contrato' && op.needs_contract && <ContratoAssinadoPanel operacao={op} onUpdate={load} />}
-
-            {/* Tab: Histórico */}
-            {tab === 'historico' &&
-            <DataTable>
-                <TableHead><Th>Data</Th><Th>Ação</Th><Th>Descrição</Th></TableHead>
-                <TableBody>
-                  {auditLogs.map((log) =>
-                <Tr key={log.id}>
-                      <Td muted className="text-xs">{formatDate(log.created_date)}</Td>
-                      <Td className="text-xs"><span className="px-2 py-0.5 rounded-full bg-gray-100 text-muted-foreground capitalize">{log.action}</span></Td>
-                      <Td className="text-xs">{log.description || '—'}</Td>
-                    </Tr>
-                )}
-                  {auditLogs.length === 0 && <EmptyRow colSpan={3} message="Nenhum histórico registrado." />}
-                </TableBody>
-              </DataTable>
-            }
+        {/* Tela da etapa + resumo financeiro */}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_300px] gap-4 items-start">
+          <div className="space-y-3 min-w-0">
+            <Tela
+              operacao={op}
+              cheques={cheques}
+              client={client}
+              payments={payments}
+              logs={auditLogs}
+              canManage={podeEditar}
+              onUpdate={load}
+            />
           </div>
-
-          {/* Right Sidebar */}
-          <div>
-            <OperacaoResumoSidebar operacao={op} cheques={cheques} onEditConditions={canManageTitulos ? () => setShowEditarCondicoes(true) : null} />
-          </div>
+          <OperacaoResumoSidebar
+            operacao={op}
+            cheques={cheques}
+            onEditConditions={podeEditar ? () => navigate(`/operacoes/${id}/editar`) : null}
+          />
         </div>
       </div>
-    </ViewModeProvider>);
-
+    </ViewModeProvider>
+  );
 }
