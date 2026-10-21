@@ -1,169 +1,172 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { base44 } from '@/api/base44Client';
 import { CheckCircle, XCircle, FileEdit, Send, RotateCcw, AlertTriangle } from 'lucide-react';
-import { logAction } from '@/lib/audit';
-import { getNextStage } from '@/lib/operationWorkflow';
-import { formatCurrency } from '@/lib/finance';
-import { syncTitulosByOperacaoStatus } from '@/lib/syncCheque';
+import { useAuth } from '@/lib/AuthContext';
+import { getNextStage, acoesDisponiveis, ACOES, MOTIVO_MINIMO } from '@/lib/operationWorkflow';
+import { transicionarOperacao } from '@/lib/workflowOps';
 
-const STORAGE_KEY = 'psx_company_settings';
-function getSettings() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
-}
-
+/**
+ * M5 — ações do workflow na tela.
+ *
+ * A tela mostra apenas o que é compatível com a etapa e o papel atuais, mas
+ * quem autoriza é o servidor: cada clique é uma solicitação de transição, não
+ * uma gravação direta da etapa. Recusas (pré-requisito faltando, efeito
+ * financeiro já existente, etapa alterada por outra pessoa) aparecem aqui.
+ */
 export default function WorkflowActions({ operacao, onUpdate }) {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [analiseWarning, setAnaliseWarning] = useState(null);
+  const [erro, setErro] = useState('');
+  const [avisos, setAvisos] = useState([]);
+  const [rejeicao, setRejeicao] = useState(null);
+  const [motivo, setMotivo] = useState('');
+
   const etapa = operacao?.etapa || 'nova';
   const nextStage = getNextStage(etapa);
-  const isFinal = etapa === 'finalizada';
-  const isRejected = etapa === 'rejeitada';
-  const isDraft = etapa === 'rascunho';
+  const disponiveis = acoesDisponiveis(operacao || {}, user);
+  const podeAvancar = disponiveis.includes(ACOES.AVANCAR) && !!nextStage;
+  const podeRejeitar = disponiveis.includes(ACOES.REJEITAR);
+  const podeReabrir = disponiveis.includes(ACOES.REABRIR);
+  const podeRascunho = disponiveis.includes(ACOES.VOLTAR_RASCUNHO);
 
-  const updateEtapa = async (newEtapa, description) => {
+  const executar = async (acao, motivoInformado) => {
     setLoading(true);
-    const updated = await base44.entities.Operation.update(operacao.id, { etapa: newEtapa });
-    await syncTitulosByOperacaoStatus({ ...operacao, etapa: newEtapa, status: updated?.status || operacao.status });
-    await logAction({ action: 'update', entity: 'Operation', entityId: operacao.id, description });
+    setErro('');
+    setAvisos([]);
+    const resposta = await transicionarOperacao({ operacaoId: operacao.id, acao, motivo: motivoInformado });
     setLoading(false);
+    if (!resposta.ok) {
+      setErro(resposta.erro || 'Transição não permitida.');
+      return;
+    }
+    setAvisos(Array.isArray(resposta.avisos) ? resposta.avisos : []);
+    setRejeicao(null);
+    setMotivo('');
     onUpdate?.();
   };
 
-  const checkAnaliseCredito = async () => {
-    setLoading(true);
-    const settings = getSettings();
-    try {
-      const [client, ops] = await Promise.all([
-        base44.entities.Client.get(operacao.client_id),
-        base44.entities.Operation.filter({ client_id: operacao.client_id }, '-created_date', 200),
-      ]);
+  if (!operacao || etapa === 'finalizada') {
+    return avisos.length > 0 ? <Avisos itens={avisos} /> : null;
+  }
 
-      const activeOps = ops.filter(o =>
-        o.id !== operacao.id &&
-        o.status !== 'quitado' &&
-        !['rejeitada', 'rascunho', 'finalizada'].includes(o.etapa || '')
-      );
-      const usedLimit = activeOps.reduce((s, o) => s + (o.balance_due || o.total_receivable || 0), 0);
-      const thisOpValue = operacao.total_receivable || operacao.balance_due || 0;
-      const totalExposure = usedLimit + thisOpValue;
-      const creditLimit = client.credit_limit || 0;
-      const overLimit = creditLimit > 0 && totalExposure > creditLimit;
-
-      const missingDocs = [];
-      if (!client.doc_rg_url) missingDocs.push('RG');
-      if (!client.doc_cnh_url) missingDocs.push('CNH');
-      if (!client.doc_income_url) missingDocs.push('Comprovante de Renda');
-      if (!client.doc_address_url) missingDocs.push('Comprovante de Endereço');
-
-      const issues = [];
-      let blocked = false;
-
-      if (overLimit) {
-        issues.push(`Limite de crédito excedido: ${formatCurrency(totalExposure)} utilizado de ${formatCurrency(creditLimit)} disponível`);
-        if (settings.block_over_limit !== false) blocked = true;
-      }
-      if (missingDocs.length > 0 && settings.validate_cpf_cnpj !== false) {
-        issues.push(`Documentação incompleta: faltam ${missingDocs.join(', ')}`);
-      }
-      if (client.status === 'bloqueado') {
-        issues.push('Cliente bloqueado no sistema');
-        blocked = true;
-      } else if (client.status === 'risco') {
-        issues.push('Cliente em situação de risco');
-      }
-
-      setLoading(false);
-
-      if (issues.length === 0) {
-        updateEtapa(nextStage.key, `Operação avançou para ${nextStage.label}`);
-      } else {
-        setAnaliseWarning({ issues, blocked });
-      }
-    } catch (e) {
-      setLoading(false);
-      updateEtapa(nextStage.key, `Operação avançou para ${nextStage.label}`);
-    }
-  };
-
-  const Btn = ({ onClick, label, icon: Icon, color }) => (
+  const Btn = ({ onClick, label, icon: Icon, color, title }) => (
     <button
       onClick={onClick}
       disabled={loading}
+      title={title}
       className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold border rounded-lg transition-colors disabled:opacity-50 ${color}`}
     >
       <Icon className="w-3.5 h-3.5" /> {label}
     </button>
   );
 
-  if (isFinal) return null;
-
   return (
-    <div className="flex flex-wrap gap-2">
-      {isRejected ? (
-        <Btn onClick={() => updateEtapa('rascunho', 'Operação reaberta como rascunho')} label="Reabrir" icon={RotateCcw} color="border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100" />
-      ) : (
-        <>
-          <Btn onClick={() => updateEtapa('rejeitada', 'Operação rejeitada')} label="Rejeitar" icon={XCircle} color="border-red-200 text-red-700 bg-red-50 hover:bg-red-100" />
-          {!isDraft && (
-            <Btn onClick={() => updateEtapa('rascunho', 'Operação voltou para rascunho')} label="Rascunho" icon={RotateCcw} color="border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100" />
-          )}
-          {etapa === 'analise_credito' && (
-            <Btn onClick={() => navigate(`/operacoes/${operacao.id}/editar`)} label="Editar" icon={FileEdit} color="border-border hover:bg-gray-50" />
-          )}
-          {nextStage && (
-            <Btn
-              onClick={etapa === 'analise_credito' ? checkAnaliseCredito : () => updateEtapa(nextStage.key, `Operação avançou para ${nextStage.label}`)}
-              label={`Enviar para ${nextStage.label}`}
-              icon={Send}
-              color="border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
-            />
-          )}
-        </>
-      )}
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        {etapa === 'analise_credito' && disponiveis.length > 0 && (
+          <Btn onClick={() => navigate(`/operacoes/${operacao.id}/editar`)} label="Editar" icon={FileEdit} color="border-border hover:bg-gray-50" />
+        )}
+        {podeAvancar && (
+          <Btn
+            onClick={() => executar(ACOES.AVANCAR)}
+            label={`Enviar para ${nextStage.label}`}
+            icon={Send}
+            color="border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
+          />
+        )}
+        {podeRascunho && (
+          <Btn
+            onClick={() => executar(ACOES.VOLTAR_RASCUNHO)}
+            label="Voltar para rascunho"
+            icon={RotateCcw}
+            color="border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100"
+            title="Só é permitido quando a operação não tem nenhum efeito financeiro."
+          />
+        )}
+        {podeRejeitar && (
+          <Btn
+            onClick={() => { setMotivo(''); setErro(''); setRejeicao(true); }}
+            label="Rejeitar"
+            icon={XCircle}
+            color="border-red-200 text-red-700 bg-red-50 hover:bg-red-100"
+          />
+        )}
+        {podeReabrir && (
+          <Btn
+            onClick={() => executar(ACOES.REABRIR)}
+            label="Reabrir"
+            icon={CheckCircle}
+            color="border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100"
+            title="Reabre como rascunho e devolve a pendente apenas os títulos cancelados sem efeito financeiro."
+          />
+        )}
+      </div>
 
-      {/* Análise de Crédito Warning Dialog */}
-      {analiseWarning && (
+      {erro && (
+        <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{erro}</p>
+      )}
+      <Avisos itens={avisos} />
+
+      {rejeicao && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setAnaliseWarning(null)} />
+          <div className="absolute inset-0 bg-black/40" onClick={() => setRejeicao(null)} />
           <div className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
             <div className="flex items-start gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center shrink-0">
-                <AlertTriangle className="w-5 h-5 text-amber-500" />
+              <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center shrink-0">
+                <AlertTriangle className="w-5 h-5 text-red-500" />
               </div>
               <div>
-                <h3 className="text-sm font-bold">Avisos na Análise de Crédito</h3>
+                <h3 className="text-sm font-bold">Rejeitar operação</h3>
                 <p className="text-xs text-muted-foreground mt-1">
-                  {analiseWarning.blocked
-                    ? 'Corrija os itens abaixo antes de avançar:'
-                    : 'Foram identificados avisos. Deseja avançar mesmo assim?'}
+                  A rejeição cancela os títulos pendentes e fica registrada no histórico.
+                  Operações com recebimento, cobrança emitida, repasse executado ou título
+                  compensado não podem ser rejeitadas.
                 </p>
               </div>
             </div>
-            <ul className="space-y-2">
-              {analiseWarning.issues.map((issue, i) => (
-                <li key={i} className="text-sm text-amber-800 flex items-start gap-2 bg-amber-50 rounded-lg px-3 py-2">
-                  <span className="text-amber-500 shrink-0">•</span> {issue}
-                </li>
-              ))}
-            </ul>
-            <div className="flex justify-end gap-2 pt-1">
-              <button onClick={() => setAnaliseWarning(null)} className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-gray-50">
-                {analiseWarning.blocked ? 'Corrigir' : 'Cancelar'}
-              </button>
-              {!analiseWarning.blocked && (
-                <button
-                  onClick={() => { setAnaliseWarning(null); updateEtapa(nextStage.key, `Operação avançou para ${nextStage.label}`); }}
-                  className="px-4 py-2 text-sm font-semibold bg-foreground text-white rounded-lg hover:bg-foreground/90"
-                >
-                  Avançar mesmo assim
-                </button>
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1.5">Motivo da rejeição *</label>
+              <textarea
+                value={motivo}
+                onChange={(e) => setMotivo(e.target.value)}
+                rows={3}
+                placeholder="Descreva o motivo da rejeição"
+                className="w-full px-3 py-2 text-sm border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-ring"
+              />
+              {motivo.trim().length > 0 && motivo.trim().length < MOTIVO_MINIMO && (
+                <p className="text-xs text-red-600 mt-1">Informe ao menos {MOTIVO_MINIMO} caracteres.</p>
               )}
+              {erro && <p className="text-xs text-red-700 mt-2">{erro}</p>}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setRejeicao(null)} className="px-4 py-2 text-sm font-medium border border-border rounded-lg hover:bg-gray-50">
+                Cancelar
+              </button>
+              <button
+                onClick={() => executar(ACOES.REJEITAR, motivo)}
+                disabled={loading || motivo.trim().length < MOTIVO_MINIMO}
+                className="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                Rejeitar operação
+              </button>
             </div>
           </div>
         </div>
       )}
     </div>
+  );
+}
+
+function Avisos({ itens }) {
+  if (!itens || itens.length === 0) return null;
+  return (
+    <ul className="space-y-1">
+      {itens.map((aviso, i) => (
+        <li key={i} className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 flex items-start gap-2">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-500 shrink-0 mt-0.5" /> {aviso}
+        </li>
+      ))}
+    </ul>
   );
 }
