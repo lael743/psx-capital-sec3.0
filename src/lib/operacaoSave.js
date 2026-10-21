@@ -23,7 +23,7 @@
 
 import { calcTituloRow, montarCronograma, numeroDoTitulo } from './operacaoCalc.js';
 import { daysBetween } from './finance.js';
-import { isFormatoNovo, normalizarCalcMode } from './formatosCalculo.js';
+import { normalizarCalcMode } from './formatosCalculo.js';
 
 const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
@@ -202,7 +202,7 @@ export function montarPayloadOperacao({ resumo, form, ctx, editando, numeroOpera
     // formato efetivamente calculado é derivável por calcModeEfetivo e os
     // valores já ficam congelados no registro; gravá-lo aqui fazia a operação
     // reaberta perder a diferença entre "Padrão invertido" e "Inverso".
-    calc_mode: calcMode,
+    calc_mode: ctx.calcMode || normalizarCalcMode(form.calc_mode),
     calculo_inverso: form.calculo_inverso || false,
     rate: resumo.rate,
     interest_type: form.interest_type,
