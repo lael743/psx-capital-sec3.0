@@ -105,6 +105,22 @@ export function aceitaInversao(mode) {
   return chave === FACE_POR_REPASSE || chave === PRICE;
 }
 
+export const CALC_MODE_EMPREESTIMO = 'emprestimo';
+
+/**
+ * Formato REALMENTE usado no cálculo da operação.
+ * Regras (as mesmas de antes da renomeação, agora com nomes explícitos):
+ *  · Parcelado manda em tudo — a Tabela Price tem o seu próprio cronograma;
+ *  · operação do tipo Empréstimo continua no motor de empréstimo;
+ *  · nos demais, a opção "inverter" troca a entrada para o repasse desejado.
+ */
+export function calcModeEfetivo({ tipo, calcMode, calculoInverso } = {}) {
+  const modo = normalizarCalcMode(calcMode);
+  if (modo === PRICE) return PRICE;
+  if (tipo === CALC_MODE_EMPREESTIMO) return CALC_MODE_EMPREESTIMO;
+  return calculoInverso ? FACE_POR_REPASSE : modo;
+}
+
 /**
  * Taxa do PERÍODO a partir da taxa mensal e dos dias do intervalo.
  *

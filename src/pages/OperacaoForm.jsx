@@ -8,6 +8,7 @@ import { formatCurrency, today } from '@/lib/finance';
 import { logAction } from '@/lib/audit';
 import { bloqueioEdicaoCompleta } from '@/lib/scheduleWrite';
 import { resumoFinanceiro, validarOperacao } from '@/lib/operacaoCalc';
+import { DESAGIO_FACE, PRICE, calcModeEfetivo, normalizarCalcMode } from '@/lib/formatosCalculo';
 import { montarPayloadOperacao, montarTitulosCheque, salvarOperacao, proximoNumeroOperacao } from '@/lib/operacaoSave';
 import { emptyTitulo } from '@/components/operacao/wizard/TituloInlineTable';
 import WizardStepper from '@/components/operacao/wizard/WizardStepper';
@@ -24,15 +25,19 @@ const DRAFT_KEY = 'psx_operacao_wizard_draft';
 
 const getSettings = () => { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; } };
 
-const PRODUTO_TO_TYPE = { cheque: 'cheque', boleto: 'boleto', capital_desagio: 'emprestimo' };
-const PRODUTO_TO_CALCMODE = { cheque: 'inverso', boleto: 'inverso', capital_desagio: 'capital_desagio' };
+const PRODUTO_TO_TYPE = { cheque: 'cheque', duplicata: 'duplicata', boleto: 'boleto', capital_desagio: 'emprestimo' };
+const PRODUTO_TO_CALCMODE = { cheque: DESAGIO_FACE, duplicata: DESAGIO_FACE, boleto: DESAGIO_FACE, capital_desagio: 'capital_desagio' };
 
 // Map produto nome → tipo/calc_mode para compatibilidade com operações antigas
 const LEGACY_PRODUTO_MAP = {
-  cheque: { tipo: 'cheque', calc_mode: 'inverso' },
-  boleto: { tipo: 'boleto', calc_mode: 'inverso' },
+  cheque: { tipo: 'cheque', calc_mode: DESAGIO_FACE },
+  duplicata: { tipo: 'duplicata', calc_mode: DESAGIO_FACE },
+  boleto: { tipo: 'boleto', calc_mode: DESAGIO_FACE },
   capital_desagio: { tipo: 'emprestimo', calc_mode: 'capital_desagio' },
 };
+
+/** Tipos cujo título exige sacado e pode ser parcelado. */
+const TIPOS_COM_SACADO = ['boleto', 'duplicata', 'emprestimo'];
 
 export default function OperacaoForm() {
   const navigate = useNavigate();
@@ -72,7 +77,7 @@ export default function OperacaoForm() {
     produto_id: '',
     produto: simParam?.type === 'emprestimo' ? 'capital_desagio' : simParam?.type || 'cheque',
     tipo: simParam?.type === 'emprestimo' ? 'emprestimo' : (simParam?.type || 'cheque'),
-    calc_mode: simParam?.type === 'emprestimo' ? 'capital_desagio' : 'inverso',
+    calc_mode: simParam?.type === 'emprestimo' ? 'capital_desagio' : DESAGIO_FACE,
     calculo_inverso: false,
     rate: simParam?.rate || '',
     interest_type: simParam?.interest_type || 'simples',
@@ -118,7 +123,7 @@ export default function OperacaoForm() {
         produto_id: op.produto_id || '',
         produto: op.produto || (op.type === 'emprestimo' ? 'capital_desagio' : op.type),
         tipo: op.type || legacy.tipo || 'cheque',
-        calc_mode: op.calc_mode || legacy.calc_mode || 'inverso',
+        calc_mode: normalizarCalcMode(op.calc_mode || legacy.calc_mode),
         calculo_inverso: op.calculo_inverso || false,
         rate: op.rate || '',
         interest_type: op.interest_type || 'simples',
@@ -226,11 +231,17 @@ export default function OperacaoForm() {
 
   // Step validation
   const isAssinatura = form.tipo === 'assinatura';
-  const isParcelamento = (form.tipo === 'boleto' || form.tipo === 'emprestimo') && form.calc_mode !== 'capital_desagio' && form.produto !== 'capital_desagio';
-  const isEmprestimoSemCedente = form.tipo === 'emprestimo' && isParcelamento;
+  const modoAtual = normalizarCalcMode(form.calc_mode);
+  // A EXIGÊNCIA de sacado vem do TIPO do título, não do formato de cálculo.
+  const exigeSacado = TIPOS_COM_SACADO.includes(form.tipo) && modoAtual !== 'capital_desagio' && form.produto !== 'capital_desagio';
+  // A TELA de parcelas é usada pelo tipo parcelável e por qualquer operação no
+  // formato Parcelado (a Tabela Price gera o próprio cronograma).
+  const isParcelado = modoAtual === PRICE;
+  const isParcelamento = exigeSacado || isParcelado;
+  const isEmprestimoSemCedente = form.tipo === 'emprestimo' && exigeSacado;
   const step1Valid = isAssinatura
     ? !!form.client_id && parseFloat(form.rate) > 0 && !!form.produto && !!form.start_date
-    : (isEmprestimoSemCedente || form.client_id) && parseFloat(form.rate) > 0 && form.start_date && form.produto && (!isParcelamento || (form.sacado_name && form.sacado_doc));
+    : (isEmprestimoSemCedente || form.client_id) && parseFloat(form.rate) > 0 && form.start_date && form.produto && (!exigeSacado || (form.sacado_name && form.sacado_doc));
   const validTitulos = titulos.filter((t) => t.vencimento && parseFloat(t.valor_face) > 0);
   const assinantesValid = (form.assinatura_sacados || []).filter((a) => a.sacado_name && a.sacado_doc && parseFloat(a.valor_assinatura) > 0);
   const step2Valid = isAssinatura ? parseFloat(form.valor_antecipacao) > 0 && assinantesValid.length > 0 : validTitulos.length > 0;
@@ -249,7 +260,11 @@ export default function OperacaoForm() {
 
   // Cálculo financeiro: uma única fonte (operacaoCalc) para tela e gravação.
   const isEmprestimo = form.tipo === 'emprestimo';
-  const effectiveCalcMode = isEmprestimo ? 'emprestimo' : (form.calculo_inverso ? 'padrao' : form.calc_mode);
+  const effectiveCalcMode = calcModeEfetivo({
+    tipo: form.tipo,
+    calcMode: form.calc_mode,
+    calculoInverso: form.calculo_inverso,
+  });
 
   // Safe navigation
   const safeNavigate = (target) => {
@@ -398,8 +413,8 @@ export default function OperacaoForm() {
     if (!step1Valid || !step2Valid) return;
 
     const opType = form.tipo || PRODUTO_TO_TYPE[form.produto] || 'cheque';
-    const calcMode = form.calc_mode || PRODUTO_TO_CALCMODE[form.produto] || 'inverso';
-    const effectiveSaveCalcMode = form.tipo === 'emprestimo' ? 'emprestimo' : (form.calculo_inverso ? 'padrao' : calcMode);
+    const calcMode = normalizarCalcMode(form.calc_mode || PRODUTO_TO_CALCMODE[form.produto]);
+    const effectiveSaveCalcMode = calcModeEfetivo({ tipo: form.tipo, calcMode, calculoInverso: form.calculo_inverso });
 
     // M4 — resumo ÚNICO (mesma função do resumo exibido): o que se vê é o que se grava.
     const resumo = resumoFinanceiro({ titulos, form, calcMode: effectiveSaveCalcMode });
@@ -479,7 +494,7 @@ export default function OperacaoForm() {
     }
 
     // Vincular sacado da operação (boleto/empréstimo) — cria ou busca o cadastro e atualiza a operação
-    if ((opType === 'boleto' || opType === 'emprestimo') && !form.sacado_id && form.sacado_name && form.sacado_doc) {
+    if (TIPOS_COM_SACADO.includes(opType) && !form.sacado_id && form.sacado_name && form.sacado_doc) {
       try {
         const existing = await base44.entities.Sacado.filter({ document: form.sacado_doc });
         let sacadoId;

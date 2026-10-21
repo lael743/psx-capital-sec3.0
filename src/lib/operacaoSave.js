@@ -23,6 +23,7 @@
 
 import { calcTituloRow, montarCronograma, numeroDoTitulo } from './operacaoCalc.js';
 import { daysBetween } from './finance.js';
+import { isFormatoNovo, normalizarCalcMode } from './formatosCalculo.js';
 
 const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
 
@@ -197,7 +198,10 @@ export function montarPayloadOperacao({ resumo, form, ctx, editando, numeroOpera
     type: ctx.opType,
     produto: form.produto,
     produto_id: form.produto_id || undefined,
-    calc_mode: ctx.calcMode,
+    // Grava o formato REALMENTE usado no cálculo (não o "desejado"): é o que
+    // torna a operação formalizada reproduzível para auditoria. Formatos que
+    // não são do usuário (motor de empréstimo) mantêm a chave de origem.
+    calc_mode: isFormatoNovo(ctx.calcModeEfetivo) ? normalizarCalcMode(ctx.calcModeEfetivo) : ctx.calcMode,
     calculo_inverso: form.calculo_inverso || false,
     rate: resumo.rate,
     interest_type: form.interest_type,

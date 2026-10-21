@@ -5,13 +5,10 @@ import CurrencyInput from '@/components/ui/CurrencyInput';
 import { formatCurrency } from '@/lib/finance';
 import { Package, Loader2 } from 'lucide-react';
 import { maskCpfCnpj } from '@/lib/masks';
+import { labelCalcMode, normalizarCalcMode } from '@/lib/formatosCalculo';
 
-const CALCMODE_LABEL = {
-  padrao: 'Padrão',
-  inverso: 'Juros Embutido',
-  desconto_direto: 'Desconto Direto',
-  capital_desagio: 'Capital + Deságio',
-};
+// Tipos cujo título exige sacado (a exigência vem do TIPO, nunca do formato).
+const TIPOS_COM_SACADO = ['boleto', 'duplicata', 'emprestimo'];
 
 export default function StepCedenteProduto({ form, setForm, selectedClient, setSelectedClient, clients, clientUsedLimit, setClientUsedLimit, settings, onNovoCedente }) {
   const [touched, setTouched] = useState({});
@@ -52,8 +49,8 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
       produto_id: p.id,
       produto: p.nome,
       tipo: p.tipo,
-      calc_mode: p.calc_mode,
-      calculo_inverso: p.calc_mode === 'padrao' ? false : (p.calculo_inverso !== false),
+      calc_mode: normalizarCalcMode(p.calc_mode),
+      calculo_inverso: p.calculo_inverso === true,
       rate: f.rate || p.default_rate || '',
       interest_type: p.default_interest_type || f.interest_type,
       tarifa_operacao: p.default_tarifa_operacao ?? f.tarifa_operacao,
@@ -71,6 +68,8 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
   };
 
   const selectedProduto = produtos.find((p) => p.id === form.produto_id);
+  const formatoAtual = normalizarCalcMode(form.calc_mode);
+  const exigeSacado = TIPOS_COM_SACADO.includes(form.tipo) && formatoAtual !== 'capital_desagio' && form.produto !== 'capital_desagio';
 
   return (
     <div className="space-y-5">
@@ -82,7 +81,7 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
       {/* Cedente */}
       <div>
         <label className="block text-xs font-medium text-muted-foreground mb-1.5">
-          Cedente {((form.tipo === 'emprestimo' && form.calc_mode !== 'capital_desagio' && form.produto !== 'capital_desagio') ? '' : '*')}
+          Cedente {((form.tipo === 'emprestimo' && exigeSacado) ? '' : '*')}
         </label>
         <ClienteSearchInput
           clients={clients}
@@ -90,7 +89,7 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
           onSelect={handleClientSelect}
           onCreateNew={onNovoCedente} />
 
-        {(form.tipo === 'emprestimo' && form.calc_mode !== 'capital_desagio' && form.produto !== 'capital_desagio') && !selectedClient && (
+        {(form.tipo === 'emprestimo' && exigeSacado) && !selectedClient && (
           <p className="text-xs text-blue-600 mt-1.5">Empréstimo sem cedente — negociação direta com o sacado.</p>
         )}
 
@@ -116,7 +115,7 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
       </div>
 
       {/* Sacado (apenas para boleto/empréstimo) */}
-      {(form.tipo === 'boleto' || form.tipo === 'emprestimo') && form.calc_mode !== 'capital_desagio' && form.produto !== 'capital_desagio' && (
+      {exigeSacado && (
         <div className="border border-blue-200 bg-blue-50/50 rounded-xl p-4 space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs font-bold text-blue-900 uppercase tracking-wider">Sacado da Operação</span>
@@ -180,7 +179,7 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
               <option value="">Selecione um produto...</option>
               {produtos.map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.nome} — {CALCMODE_LABEL[p.calc_mode] || p.calc_mode} — Taxa {p.default_rate || 0}% — Float {p.default_float_dias || 0}d
+                  {p.nome} — {labelCalcMode(p.calc_mode)} — Taxa {p.default_rate || 0}% — Float {p.default_float_dias || 0}d
                 </option>
               ))}
             </select>
@@ -189,7 +188,7 @@ export default function StepCedenteProduto({ form, setForm, selectedClient, setS
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold">{selectedProduto.nome}</div>
                   <span className="text-[10px] px-1.5 py-0.5 rounded bg-gray-100 font-medium text-muted-foreground">
-                    {CALCMODE_LABEL[selectedProduto.calc_mode] || selectedProduto.calc_mode}
+                    {labelCalcMode(selectedProduto.calc_mode)}
                   </span>
                 </div>
                 <div className="text-xs text-muted-foreground mt-0.5">{selectedProduto.descricao || '—'}</div>

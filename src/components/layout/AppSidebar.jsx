@@ -41,7 +41,8 @@ const NAV_GROUPS = [
     label: 'Operações',
     items: [
       { label: 'Operações', href: '/operacoes', icon: 'TrendingUp', pageKey: 'operacoes' },
-      { label: 'Produtos', href: '/produtos', icon: 'Package', pageKey: 'produtos' },
+      // Produtos não tem item próprio no menu: o cadastro vive em
+      // Configurações › Produtos (rota /produtos preservada).
       { label: 'Cheques', href: '/cheques', icon: 'FileCheck', pageKey: 'cheques' },
       { label: 'Boletos', href: '/boletos', icon: 'Receipt', pageKey: 'boletos' },
       { label: 'Simulador', href: '/simulador', icon: 'Calculator', pageKey: 'simulador' },

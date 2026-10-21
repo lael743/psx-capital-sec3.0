@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
-import { formatCurrency } from '@/lib/finance';
+import { formatCurrency, daysBetween } from '@/lib/finance';
 import { calcTituloRow } from './TituloInlineTable';
 import { resumoFinanceiro } from '@/lib/operacaoCalc';
+import {
+  PRICE, DESAGIO_FACE, FACE_POR_REPASSE, calcModeEfetivo, normalizarCalcMode,
+  cronogramaPrice, cronogramaPricePorParcela,
+} from '@/lib/formatosCalculo';
 import { RefreshCw, AlertTriangle, Calendar } from 'lucide-react';
 
 function addDays(dateStr, days) {

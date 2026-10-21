@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { base44 } from '@/api/base44Client';
-import { Save, Building2, Bell, Shield, FileText, Users, ShieldCheck, Plus, Eye, EyeOff, Pencil, Trash2, RefreshCw, Mail, UserPlus, ChevronDown, ChevronUp, Check } from 'lucide-react';
+import { Save, Building2, Bell, Shield, FileText, Users, ShieldCheck, Plus, Eye, EyeOff, Pencil, Trash2, RefreshCw, Mail, UserPlus, ChevronDown, ChevronUp, Check, Package } from 'lucide-react';
 import { logAction } from '@/lib/audit';
-import { ALL_PAGES } from '@/lib/pageAccess';
+import { ALL_PAGES, hasPageAccess } from '@/lib/pageAccess';
+import { useAuth } from '@/lib/AuthContext';
+import ProdutosManager from '@/components/produtos/ProdutosManager';
 
 const STORAGE_KEY = 'psx_company_settings';
 
@@ -402,6 +404,8 @@ export default function Configuracoes() {
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState('empresa');
   const [configId, setConfigId] = useState(null);
+  const { user } = useAuth();
+  const podeVerProdutos = hasPageAccess(user, 'produtos');
 
   // Carrega da entidade (prioridade) e sincroniza com localStorage
   useEffect(() => {
@@ -460,9 +464,12 @@ export default function Configuracoes() {
     { key: 'contrato', label: 'Contrato', icon: FileText },
     { key: 'assessores', label: 'Assessores', icon: ShieldCheck },
     { key: 'usuarios', label: 'Usuários', icon: Users },
+    // Produtos saiu do menu lateral e passa a ser acessado por aqui, com a
+    // MESMA permissão de antes (chave 'produtos' em allowed_pages).
+    ...(podeVerProdutos ? [{ key: 'produtos', label: 'Produtos', icon: Package }] : []),
   ];
 
-  const showSaveButton = !['assessores', 'usuarios'].includes(tab);
+  const showSaveButton = !['assessores', 'usuarios', 'produtos'].includes(tab);
 
   return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto">
@@ -684,6 +691,17 @@ export default function Configuracoes() {
 
         {/* ── Usuários ── */}
         {tab === 'usuarios' && <TabUsuarios />}
+
+        {/* ── Produtos de Operação ── */}
+        {tab === 'produtos' && podeVerProdutos && (
+          <div>
+            <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Produtos de Operação</h3>
+            <p className="text-xs text-muted-foreground mb-3">
+              Tipos de antecipação (Cheque, Duplicata, Boleto) e formatos de cálculo (Padrão, Inverso, Parcelado).
+            </p>
+            <ProdutosManager />
+          </div>
+        )}
       </div>
 
       {showSaveButton && (
