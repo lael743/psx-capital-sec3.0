@@ -21,6 +21,7 @@
  */
 
 import { daysBetween } from './finance.js';
+import { DESAGIO_FACE, FACE_POR_REPASSE, PRICE, normalizarCalcMode } from './formatosCalculo.js';
 
 function round2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
 
@@ -48,25 +49,39 @@ export function calcDesagioTitulo(valorFace, taxaMensal, dias, interestType, arr
  * O campo `valor_face` do título armazena o valor DIGITADO pelo usuário; o
  * retorno traz `valorFace` (face real) e `liquido` (líquido real).
  */
-export function calcTituloRow(titulo, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = 'inverso') {
+export function calcTituloRow(titulo, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = DESAGIO_FACE) {
   const inputValor = parseFloat(titulo.valor_face) || 0;
   const outrasDespesas = parseFloat(titulo.outras_despesas) || 0;
   const dias = titulo.vencimento ? daysBetween(startDate, titulo.vencimento) + (floatDias || 0) : 0;
+  const modo = normalizarCalcMode(calcMode);
 
   let valorFace, desagio, liquido;
 
-  if (calcMode === 'padrao') {
+  if (modo === FACE_POR_REPASSE) {
+    // Inverso — o valor digitado é o REPASSE desejado; a face é calculada.
     liquido = inputValor;
     const taxaProp = (rate / 100) * (dias / 30);
     const fator = 1 - taxaProp;
     valorFace = fator > 0 ? round2(liquido / fator) : liquido;
     desagio = round2(valorFace - liquido);
-  } else if (calcMode === 'desconto_direto') {
+  } else if (modo === PRICE) {
+    // Parcelado — a linha já traz a parcela (face) e a amortização calculadas
+    // pela Tabela Price em formatosCalculo.cronogramaPrice.
+    valorFace = inputValor;
+    const amortizacao = parseFloat(titulo.valor_liquido) || 0;
+    if (amortizacao > 0) {
+      liquido = round2(amortizacao);
+      desagio = round2(valorFace - liquido);
+    } else {
+      desagio = calcDesagioTitulo(valorFace, rate, dias, interestType, arredondarTaxaDiaria);
+      liquido = round2(valorFace - desagio - outrasDespesas);
+    }
+  } else if (modo === 'desconto_direto') {
     liquido = inputValor;
     const taxaProp = (rate / 100) * (dias / 30);
     desagio = round2(liquido * taxaProp);
     valorFace = round2(liquido + desagio);
-  } else if (calcMode === 'emprestimo') {
+  } else if (modo === 'emprestimo') {
     valorFace = inputValor;
     liquido = parseFloat(titulo.valor_liquido) || 0;
     desagio = round2(valorFace - liquido);
@@ -79,7 +94,7 @@ export function calcTituloRow(titulo, startDate, rate, interestType, floatDias, 
   return { dias, desagio, liquido, valorFace };
 }
 
-export function calcTitulosTotais(titulos, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = 'inverso') {
+export function calcTitulosTotais(titulos, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = DESAGIO_FACE) {
   let totalFace = 0, totalDesagio = 0, totalOutras = 0, totalLiquido = 0, pesoDias = 0;
   (titulos || []).forEach((t) => {
     const { dias, desagio, liquido, valorFace } = calcTituloRow(t, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode);
@@ -147,22 +162,26 @@ export function distribuirPorPeso(total, pesos) {
  */
 export function resumoFinanceiro({ titulos, form, calcMode }) {
   const validos = (titulos || []).filter(isTituloValido);
+  const modo = normalizarCalcMode(calcMode);
   const rate = parseFloat(form?.rate) || 0;
   const floatDias = parseFloat(form?.float_dias) || 0;
   const tarifaOperacao = parseFloat(form?.tarifa_operacao) || 0;
   const tarifaPorTitulo = parseFloat(form?.tarifa_por_titulo) || 0;
   const arredondar = form?.arredondar_taxa_diaria || false;
 
-  const totals = calcTitulosTotais(validos, form?.start_date, rate, form?.interest_type, floatDias, arredondar, calcMode);
+  const totals = calcTitulosTotais(validos, form?.start_date, rate, form?.interest_type, floatDias, arredondar, modo);
 
   const n = validos.length;
   const tarifaTitulos = round2(tarifaPorTitulo * n);
   const totalTarifas = round2(tarifaTitulos + tarifaOperacao);
-  const isPadrao = calcMode === 'padrao';
-  const isEmprestimo = calcMode === 'emprestimo';
+  // `repasseConhecido` = o usuário digita o repasse e o sistema calcula a face.
+  // (era o antigo `isPadrao`, cujo nome estava invertido em relação à tela)
+  const repasseConhecido = modo === FACE_POR_REPASSE;
+  const isPadrao = repasseConhecido;
+  const isEmprestimo = modo === 'emprestimo';
 
-  const valorLiquido = (isPadrao || isEmprestimo) ? totals.totalLiquido : round2(totals.totalLiquido - totalTarifas);
-  const totalReceivable = isPadrao
+  const valorLiquido = (repasseConhecido || isEmprestimo) ? totals.totalLiquido : round2(totals.totalLiquido - totalTarifas);
+  const totalReceivable = repasseConhecido
     ? round2(totals.totalFace + totals.totalOutras + totalTarifas)
     : totals.totalFace;
   const projectedProfit = round2(totalReceivable - valorLiquido);
@@ -171,7 +190,7 @@ export function resumoFinanceiro({ titulos, form, calcMode }) {
   // título. Só a tarifa fixa da operação (que não é de ninguém em particular)
   // é rateada por esse peso.
   const pesos = validos.map((t) => {
-    const { valorFace } = calcTituloRow(t, form?.start_date, rate, form?.interest_type, floatDias, arredondar, calcMode);
+    const { valorFace } = calcTituloRow(t, form?.start_date, rate, form?.interest_type, floatDias, arredondar, modo);
     const outras = parseFloat(t.outras_despesas) || 0;
     const proprio = isPadrao ? round2(valorFace + outras + tarifaPorTitulo) : valorFace;
     return proprio > 0 ? proprio : 1;
@@ -197,7 +216,14 @@ export function resumoFinanceiro({ titulos, form, calcMode }) {
     totalDistribuidoTotal: totalReceivable,
     installmentValue,
     isPadrao,
+    repasseConhecido,
     isEmprestimo,
+    calcMode: modo,
+    // Composição do resultado, sem confundir receita financeira com lucro:
+    // deduções = receita financeira (juros) + despesas cobradas do cliente.
+    deducoes: round2(totalReceivable - valorLiquido),
+    receitaFinanceira: round2(totals.totalDesagio),
+    despesas: round2(totals.totalOutras + totalTarifas),
   };
 }
 

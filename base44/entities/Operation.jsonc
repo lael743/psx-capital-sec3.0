@@ -16,7 +16,7 @@
     },
     "sacado_id": {
       "type": "string",
-      "description": "ID do sacado/pagador (para opera\u00e7\u00f5es de boleto)"
+      "description": "ID do sacado/pagador (para opera\u00e7\u00f5es de boleto/duplicata)"
     },
     "sacado_name": {
       "type": "string",
@@ -27,16 +27,19 @@
       "enum": [
         "emprestimo",
         "cheque",
+        "duplicata",
         "boleto",
         "assinatura"
       ],
-      "default": "emprestimo"
+      "default": "emprestimo",
+      "description": "Tipo de antecipa\u00e7\u00e3o (natureza do t\u00edtulo): cheque, duplicata ou boleto. 'emprestimo' e 'assinatura' permanecem para opera\u00e7\u00f5es hist\u00f3ricas e produtos pr\u00f3prios."
     },
     "produto": {
       "type": "string",
       "enum": [
         "cheque",
         "boleto",
+        "duplicata",
         "capital_desagio",
         "assinatura"
       ],
@@ -80,6 +83,9 @@
     "calc_mode": {
       "type": "string",
       "enum": [
+        "desagio_face",
+        "face_por_repasse",
+        "price",
         "padrao",
         "inverso",
         "desconto_direto",
@@ -87,13 +93,13 @@
         "capital_desagio",
         "assinatura"
       ],
-      "default": "padrao",
-      "description": "Modo de c\u00e1lculo da opera\u00e7\u00e3o"
+      "default": "desagio_face",
+      "description": "Formato de c\u00e1lculo. desagio_face = Padr\u00e3o (valor de face conhecido; des\u00e1gio, taxas e despesas reduzem o repasse); face_por_repasse = Inverso (repasse desejado; valor de face calculado); price = Parcelado (Tabela Price). Registros hist\u00f3ricos continuam com 'padrao' e 'inverso', cujo significado \u00e9 traduzido por src/lib/formatosCalculo.js (padrao \u2192 face_por_repasse, inverso \u2192 desagio_face)."
     },
     "calculo_inverso": {
       "type": "boolean",
       "default": false,
-      "description": "Se a opera\u00e7\u00e3o usa c\u00e1lculo inverso (face = valor \u00f7 (1 \u2212 taxa \u00d7 dias/30))"
+      "description": "Se o c\u00e1lculo parte do repasse (ou da parcela) para chegar ao valor de face"
     },
     "start_date": {
       "type": "string",

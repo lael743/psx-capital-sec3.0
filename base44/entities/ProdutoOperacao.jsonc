@@ -10,28 +10,32 @@
       "type": "string",
       "enum": [
         "cheque",
+        "duplicata",
         "boleto",
         "emprestimo",
         "assinatura"
       ],
       "default": "cheque",
-      "description": "Tipo base do produto (define o tipo da opera\u00e7\u00e3o)"
+      "description": "Tipo de antecipa\u00e7\u00e3o: Cheque, Duplicata ou Boleto. Identifica a natureza do t\u00edtulo (emiss\u00e3o, registro, cobran\u00e7a, compensa\u00e7\u00e3o, integra\u00e7\u00e3o Asaas) e N\u00c3O determina a f\u00f3rmula financeira. 'emprestimo' e 'assinatura' permanecem apenas para produtos hist\u00f3ricos."
     },
     "calc_mode": {
       "type": "string",
       "enum": [
+        "desagio_face",
+        "face_por_repasse",
+        "price",
         "padrao",
         "inverso",
         "desconto_direto",
         "assinatura"
       ],
-      "default": "inverso",
-      "description": "Formato de c\u00e1lculo: Padr\u00e3o, Juros Embutido (Inverso), Desconto Direto ou Assinatura"
+      "default": "desagio_face",
+      "description": "Formato de c\u00e1lculo. desagio_face = Padr\u00e3o (face conhecida, des\u00e1gio reduz o repasse); face_por_repasse = Inverso (repasse desejado, face calculada); price = Parcelado (Tabela Price). Os valores 'padrao', 'inverso' e 'desconto_direto' s\u00e3o apelidos hist\u00f3ricos lidos por src/lib/formatosCalculo.js e nunca s\u00e3o gravados em novos produtos."
     },
     "calculo_inverso": {
       "type": "boolean",
-      "default": true,
-      "description": "Aplicar c\u00e1lculo inverso (valor \u00f7 (1 \u2212 taxa \u00d7 dias/30)): somar o des\u00e1gio ao valor de face. Predefini\u00e7\u00e3o aplicada automaticamente ao selecionar o produto."
+      "default": false,
+      "description": "Inverter a entrada: informar o repasse (ou a parcela) e calcular o valor de face. \u00c9 a op\u00e7\u00e3o de invers\u00e3o do formato escolhido."
     },
     "descricao": {
       "type": "string",
@@ -40,7 +44,7 @@
     "default_rate": {
       "type": "number",
       "default": 0,
-      "description": "Taxa padr\u00e3o de des\u00e1gio a.m. (%)"
+      "description": "Taxa padr\u00e3o a.m. (%)"
     },
     "default_interest_type": {
       "type": "string",
