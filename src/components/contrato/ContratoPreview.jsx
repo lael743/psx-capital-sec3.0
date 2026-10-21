@@ -1,6 +1,7 @@
 import { QRCodeSVG } from 'qrcode.react';
 import { formatCurrency } from '@/lib/finance';
 import { numPorExtenso as defaultNumPorExtenso, numExtenso } from '@/lib/numPorExtenso';
+import { PRICE, normalizarCalcMode } from '@/lib/formatosCalculo';
 
 const STORAGE_KEY = 'psx_company_settings';
 function getSettings() {
@@ -33,6 +34,9 @@ export default function ContratoPreview({ dados, fmtDate, numPorExtenso: numPorE
 
   // Estrutura "Capital no Vencimento + Deságio Parcelado"
   const isCapitalDesagio = isEmprestimo && operacao?.calc_mode === 'capital_desagio';
+  // Parcelado (Tabela Price) vale para qualquer natureza de título: o cronograma
+  // de parcelas é a forma de pagamento, não um detalhe do empréstimo.
+  const isParcelado = normalizarCalcMode(operacao?.calc_mode) === PRICE && schedule.length > 0;
   const cdCapital = isCapitalDesagio ? (operacao?.gross_value || valorLiberado || 0) : 0;
   const cdDesagio = isCapitalDesagio ? Math.max(0, (operacao?.total_receivable || valorFinal || 0) - cdCapital) : 0;
   const cdDesagioPer = (isCapitalDesagio && schedule.length > 0) ? schedule[0].interest : 0;
@@ -185,8 +189,45 @@ export default function ContratoPreview({ dados, fmtDate, numPorExtenso: numPorE
 
         {/* Cheques como garantia substitui promissória — vira cláusula QUINTA para cheque */}
         {operacao?.type && (
-          <Clausula num={isCheque ? 'QUINTA' : 'QUINTA-A'} titulo={isCheque ? 'Dos Cheques Dados em Garantia' : 'Do Cronograma de Pagamento'}>
-            {isCheque && cheques && cheques.length > 0 ? (
+          <Clausula num={isCheque && !isParcelado ? 'QUINTA' : 'QUINTA-A'} titulo={isCheque && !isParcelado ? 'Dos Cheques Dados em Garantia' : 'Do Cronograma de Pagamento'}>
+            {isParcelado ? (
+              <>
+                <P>O pagamento da obrigação será realizado em <Bold>{schedule.length} ({numExtenso(schedule.length)})</Bold> parcelas mensais e sucessivas, calculadas pela Tabela Price à taxa de <Bold>{acrescimoPct}% ao mês</Bold>, vencendo a primeira em <Bold>{schedule[0]?.due_date ? fmtDate(schedule[0].due_date) : '___/___/______'}</Bold> e a última em <Bold>{fmtDate(data_vencimento) || '___/___/______'}</Bold>, conforme o cronograma abaixo:</P>
+                <div className="overflow-x-auto mb-3">
+                  <table className="w-full text-xs border border-gray-300 rounded-lg overflow-hidden">
+                    <thead className="bg-gray-100">
+                      <tr>
+                        {['Parcela', 'Vencimento', 'Juros', 'Amortização', 'Total'].map(h => (
+                          <th key={h} className="px-3 py-2 text-left font-bold text-gray-700 border-b border-gray-300">{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {schedule.map((p, i) => (
+                        <tr key={i} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
+                          <td className="px-3 py-1.5 border-b border-gray-200">{p.number || i + 1}ª</td>
+                          <td className="px-3 py-1.5 border-b border-gray-200 font-semibold">{p.due_date ? fmtDate(p.due_date) : '—'}</td>
+                          <td className="px-3 py-1.5 border-b border-gray-200 text-[hsl(43,65%,47%)] font-medium">{formatCurrency(p.interest)}</td>
+                          <td className="px-3 py-1.5 border-b border-gray-200">{formatCurrency(p.principal)}</td>
+                          <td className="px-3 py-1.5 border-b border-gray-200 font-semibold">{formatCurrency(p.value)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-100">
+                      <tr>
+                        <td colSpan={2} className="px-3 py-2 font-bold text-right text-xs">Total:</td>
+                        <td className="px-3 py-2 font-bold text-xs text-[hsl(43,65%,47%)]">{formatCurrency(schedule.reduce((s, p) => s + (p.interest || 0), 0))}</td>
+                        <td className="px-3 py-2 font-bold text-xs">{formatCurrency(schedule.reduce((s, p) => s + (p.principal || 0), 0))}</td>
+                        <td className="px-3 py-2 font-bold text-xs">{formatCurrency(schedule.reduce((s, p) => s + (p.value || 0), 0))}</td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+                {isCheque && cheques && cheques.length > 0 && (
+                  <P>Os cheques entregues em garantia, descritos no instrumento, correspondem, parcela a parcela, ao cronograma acima, permanecendo sob a guarda do <Bold>CREDOR</Bold> até a integral quitação da obrigação.</P>
+                )}
+              </>
+            ) : isCheque && cheques && cheques.length > 0 ? (
               <>
                 <P>Como instrumento da operação financeira ora confessada, o <Bold>DEVEDOR</Bold> entregou ao <Bold>CREDOR</Bold> os seguintes cheques:</P>
                 <div className="overflow-x-auto mb-3">

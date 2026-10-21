@@ -1,7 +1,7 @@
 import { forwardRef } from 'react';
 import { formatCurrency, formatDate } from '@/lib/finance';
 import { calcTituloRow, calcTotalDistribuidoPerParcel, calcTotalDistribuidoTotal } from './TituloInlineTable';
-import { FACE_POR_REPASSE, calcModeEfetivo, labelCalcMode, normalizarCalcMode } from '@/lib/formatosCalculo';
+import { FACE_POR_REPASSE, PRICE, calcModeEfetivo, labelCalcMode, normalizarCalcMode } from '@/lib/formatosCalculo';
 
 /**
  * Comprovante de Antecipação de Recebíveis — layout A4 para captura em imagem/PDF.
@@ -21,6 +21,8 @@ const ComprovanteAntecipacao = forwardRef(function ComprovanteAntecipacao(
   const tituloLabel = isCheque ? 'Cheque' : 'Parcela';
   const titulosLabel = isCheque ? 'Cheques' : 'Parcelas';
   const isPadrao = normalizarCalcMode(effectiveCalcMode) === FACE_POR_REPASSE;
+  const isParcelado = normalizarCalcMode(effectiveCalcMode) === PRICE;
+  const valorParcela = isParcelado && titulos.length > 0 ? totals.totalFace / titulos.length : 0;
   const tarifaOperacaoComp = parseFloat(form.tarifa_operacao) || 0;
   const tarifaPorTituloComp = parseFloat(form.tarifa_por_titulo) || 0;
   const tarifaTitulosComp = tarifaPorTituloComp * titulos.length;
@@ -81,6 +83,7 @@ const ComprovanteAntecipacao = forwardRef(function ComprovanteAntecipacao(
           <Row label="Data da Operação" value={formatDate(form.start_date)} />
           <Row label="Vencimento Final" value={lastDueDate ? formatDate(lastDueDate) : '—'} />
           <Row label={`Quantidade de ${titulosLabel}`} value={String(titulos.length)} />
+          {isParcelado && <Row label="Valor da Parcela" value={formatCurrency(valorParcela)} />}
         </Section>
 
         {/* Valores */}
