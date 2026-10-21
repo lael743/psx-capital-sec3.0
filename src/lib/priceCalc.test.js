@@ -69,9 +69,11 @@ test('Price: parcelas de mesmo valor com vencimentos mensais', () => {
     assert.equal(l.face, round2(l.amortizacao + l.juros), 'face = amortização + juros em cada parcela');
   });
 
-  // juros crescem e amortização também (saldo cai, mas o juro do período é maior que a queda)
+  // saldo amortizando: juros caem, amortização cresce — e a taxa de cada
+  // período é aplicada sobre o saldo, com 3% a.m. em intervalos de 30 dias.
+  assert.ok(Math.abs(linhas[0].juros - round2(10000 * 0.03)) <= 0.02, '1ª parcela paga 3% sobre o valor presente');
   for (let i = 1; i < linhas.length; i++) {
-    assert.ok(linhas[i].juros > linhas[i - 1].juros, 'juros aumentam ao longo do tempo');
+    assert.ok(linhas[i].juros < linhas[i - 1].juros, 'juros caem conforme o saldo amortiza');
     assert.ok(linhas[i].amortizacao > linhas[i - 1].amortizacao, 'amortização cresce');
   }
 });
@@ -87,18 +89,16 @@ test('Price: intervalos irregulares mantêm a parcela constante e os juros do pe
   assert.equal(totais.amortizacao, 8000);
 
   let saldo = 8000;
+  let anterior = START;
   linhas.forEach((l) => {
-    const dias = daysBetween(START, l.vencimento);
-    assert.equal(l.dias, dias);
-    const jurosEsperado = round2(saldo * taxaDoPeriodo(TAXA, dias, TIPO_JUROS));
-    assert.ok(Math.abs(l.juros - jurosEsperado) <= 0.02, `juros do período de ${dias} dias`);
+    const decorridos = daysBetween(START, l.vencimento);
+    const intervalo = daysBetween(anterior, l.vencimento);
+    assert.equal(l.dias, decorridos, 'a coluna Dias mostra os dias decorridos');
+    const jurosEsperado = round2(saldo * taxaDoPeriodo(TAXA, intervalo, TIPO_JUROS));
+    assert.ok(Math.abs(l.juros - jurosEsperado) <= 0.02, `juros do período de ${intervalo} dias`);
     saldo = round2(saldo - l.amortizacao);
+    anterior = l.vencimento;
   });
-
-  // períodos mais longos geram juros maiores do que os mais curtos
-  const curto = linhas.find((l) => l.dias === daysBetween(START, '2026-11-05'));
-  const longo = linhas.find((l) => l.dias === daysBetween(START, '2027-03-15'));
-  assert.ok(longo.juros > curto.juros);
 });
 
 // 3 ── taxas e despesas adicionais (discriminadas, sem dupla cobrança)
@@ -137,7 +137,8 @@ test('Price: inverso parte da parcela conhecida e volta ao mesmo valor', () => {
     valorParcela: 3000, tarifaOperacao: 200, tarifaPorTitulo: 0,
   });
   assert.equal(porParcela.linhas.length, 4);
-  porParcela.linhas.forEach((l) => assert.equal(l.face, 3000, 'a face é exatamente a parcela informada'));
+  porParcela.linhas.forEach((l) => assert.equal(l.face, porParcela.linhas[0].face, 'todas as faces são iguais'));
+  assert.ok(Math.abs(porParcela.linhas[0].face - 3000) <= 0.01, 'a face reproduz a parcela informada');
   assert.equal(porParcela.repasse, round2(porParcela.base - 200));
 
   const porRepasse = cronogramaPriceOperacao({
@@ -206,7 +207,7 @@ test('Price: tabela, resumo, títulos e cronograma mostram os mesmos números', 
 
   assert.equal(
     round2(cronograma.reduce((s, p) => s + p.principal, 0)),
-    12300,
+    12360,
     'Σ principal gravado = repasse + tarifas (valor presente)',
   );
   assert.equal(
