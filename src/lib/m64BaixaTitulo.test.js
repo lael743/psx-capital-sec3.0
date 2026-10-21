@@ -203,8 +203,11 @@ function criarAmbiente() {
   return { api, col };
 }
 
-async function cenario({ saldoConta = 0, valor = 1000, pago = 0, marcadorCheques, falharLancamento = false } = {}) {
+async function cenario({
+  saldoConta = 0, valor = 1000, pago = 0, total, marcadorCheques, falharLancamento = false,
+} = {}) {
   const { api, col } = criarAmbiente();
+  const obrigacao = total === undefined ? valor : total;
 
   const banco = await col('Banco').create({
     name: 'BANCO TESTE', current_balance: saldoConta, [LEDGER_KEYS_FIELD]: [], active: true,
@@ -214,13 +217,14 @@ async function cenario({ saldoConta = 0, valor = 1000, pago = 0, marcadorCheques
     client_id: 'cli1',
     client_name: 'CLIENTE TESTE',
     numero_operacao: 77,
-    total_receivable: valor,
-    gross_value: valor,
+    total_receivable: obrigacao,
+    gross_value: obrigacao,
     amount_paid: pago,
-    balance_due: valor - pago,
+    balance_due: obrigacao - pago,
     status: 'ativo',
+    ...(marcadorCheques === undefined ? {} : { cheques_compensados_total: marcadorCheques }),
     due_date: '2026-10-21',
-    installment_schedule: [{ due_date: '2026-10-21', value: valor, number: 1, status: 'pendente' }],
+    installment_schedule: [{ due_date: '2026-10-21', value: obrigacao, number: 1, status: 'pendente' }],
   });
 
   const cheque = await col('Cheque').create({
@@ -383,13 +387,17 @@ test('M6.4.12 — a baixa não cria Payment nem duplica evento de caixa', async 
 });
 
 test('M6.4.13 — título, operação, caixa e conta contam a mesma história', async () => {
-  const c = await cenario({ saldoConta: 500, valor: 1000, pago: 250 });
+  // Operação com recebimento manual anterior já marcado (marcador de cheques em 0):
+  // a baixa precisa SOMAR ao que já entrou, não substituir.
+  // Obrigação de 1000, 250 já recebidos antes, título de 750 a baixar.
+  const c = await cenario({ saldoConta: 500, total: 1000, valor: 750, pago: 250, marcadorCheques: 0 });
   await compensarCheque({ cheque: c.cheque, bankId: c.banco.id, bankName: 'BANCO TESTE', data: DATA, io: c.io });
 
   const e = c.estado();
-  assert.equal(e.banco.current_balance, 1500, 'o crédito não corresponde ao valor do título');
-  assert.equal(e.operacao.amount_paid, 1250, 'o recebimento não foi somado ao já recebido');
-  assert.equal(e.operacao.balance_due, 250, 'o saldo derivado não foi recomposto');
+  assert.equal(e.banco.current_balance, 1250, 'o crédito não corresponde ao valor do título');
+  assert.equal(e.operacao.amount_paid, 1000, 'o recebimento não foi somado ao já recebido');
+  assert.equal(e.operacao.balance_due, 0, 'o saldo derivado não foi recomposto');
+  assert.equal(e.operacao.status, 'quitado');
 
   const cf = e.cashflows[0];
   const chaveDoCredito = `${cf.source_type}:${cf.source_id}`;
