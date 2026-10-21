@@ -396,7 +396,7 @@ export default function ContratoGerador() {
         data_emissao: new Date().toISOString().split('T')[0],
       },
     });
-    await base44.entities.Operation.update(operacaoVinculada.id, {
+    await editarOperacaoCampos(operacaoVinculada.id, {
       notificacao_status: 'enviado',
     });
   };

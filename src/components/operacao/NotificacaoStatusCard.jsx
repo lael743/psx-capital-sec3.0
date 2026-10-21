@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Bell, CheckCircle, Clock, Send, ExternalLink, Copy, AlertCircle, Eye, X } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { editarOperacaoCampos } from '@/lib/operacaoOps';
 import { formatCurrency } from '@/lib/finance';
 
 const STORAGE_KEY = 'psx_company_settings';
@@ -65,7 +66,7 @@ export default function NotificacaoStatusCard({ operacao, client, onUpdate }) {
         status: 'enviado',
         dados_termo: dadosTermo,
       });
-      await base44.entities.Operation.update(operacao.id, { notificacao_status: 'enviado' });
+      await editarOperacaoCampos(operacao.id, { notificacao_status: 'enviado' });
       if (onUpdate) onUpdate();
     } finally {
       setGerando(false);

@@ -146,12 +146,15 @@ export function mensagemConflito(conflitos) {
  * @returns {Promise<boolean>} `true` = gravado; `false` = conflito
  */
 export async function salvarCondicionado(base44, operacaoId, amountPaidObservado, payload) {
-  const filtro = {
-    id: operacaoId,
-    amount_paid: Number(amountPaidObservado) || 0,
-  };
-  const res = await base44.entities.Operation.updateMany(filtro, { $set: payload });
-  return !!res && res.updated === 1;
+  // M5.1 — a escrita passou para o servidor (operacaoEditar): a guarda de
+  // concorrência viaja como `onde` e o conflito volta como erro, traduzido aqui
+  // para o mesmo `false` que os chamadores já tratam.
+  try {
+    await editarOperacaoCampos(operacaoId, payload, { amount_paid: Number(amountPaidObservado) || 0 });
+    return true;
+  } catch (_) {
+    return false;
+  }
 }
 
 /**

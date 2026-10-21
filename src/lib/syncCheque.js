@@ -84,7 +84,7 @@ export async function syncTitulosByOperacaoStatus(op) {
   // conjunto no marcador, SEM tocar em amount_paid, para que a próxima
   // sincronização de cheques não volte a somar esses títulos.
   const after = await base44.entities.Cheque.filter({ operation_id: op.id });
-  await base44.entities.Operation.update(op.id, {
+  await editarOperacaoCampos(op.id, {
     cheques_compensados_total: sumCompensated(after),
   });
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { User, Phone, Mail, FileText, Link2, Loader2 } from 'lucide-react';
 import { base44 } from '@/api/base44Client';
+import { editarOperacaoCampos } from '@/lib/operacaoOps';
 
 export default function SacadoInfoCard({ operacao, onUpdate }) {
   const [sacado, setSacado] = useState(null);
@@ -42,7 +43,7 @@ export default function SacadoInfoCard({ operacao, onUpdate }) {
         });
         sacadoId = created.id;
       }
-      await base44.entities.Operation.update(operacao.id, { sacado_id: sacadoId });
+      await editarOperacaoCampos(operacao.id, { sacado_id: sacadoId });
       if (onUpdate) onUpdate();
     } catch (e) {
       alert('Erro ao vincular sacado: ' + (e.message || ''));

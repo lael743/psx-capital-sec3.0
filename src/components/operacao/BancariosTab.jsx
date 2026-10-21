@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { editarOperacaoCampos } from '@/lib/operacaoOps';
 import { Wallet, Zap, Save, Loader2, CheckCircle, Building2, Landmark, User } from 'lucide-react';
 import { formatCurrency } from '@/lib/finance';
 
@@ -51,7 +52,7 @@ export default function BancariosTab({ operacao, client, onUpdate }) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await base44.entities.Operation.update(operacao.id, {
+      await editarOperacaoCampos(operacao.id, {
         disbursement_bank_id: form.disbursement_bank_id,
         disbursement_bank_name: form.disbursement_bank_name,
         disbursement_method: form.disbursement_method,

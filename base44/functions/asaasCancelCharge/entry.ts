@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
       // Try to clear from operation-level field
       const ops = await base44.entities.Operation.filter({ asaas_payment_id: payment_id });
       if (ops.length > 0) {
-        await base44.entities.Operation.update(ops[0].id, {
+        await base44.asServiceRole.entities.Operation.update(ops[0].id, {
           asaas_payment_id: '',
           asaas_payment_status: 'deleted',
           asaas_invoice_url: '',

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { base44 } from '@/api/base44Client';
+import { editarOperacaoCampos, registrarContratoAssinado } from '@/lib/operacaoOps';
 import { Upload, CheckCircle2, FileText, Eye, X, AlertCircle } from 'lucide-react';
 import { logAction } from '@/lib/audit';
 
@@ -15,7 +16,7 @@ export default function ContratoAssinadoPanel({ operacao, onUpdate }) {
     setUploading(true);
     try {
       const { file_url } = await base44.integrations.Core.UploadFile({ file });
-      await base44.entities.Operation.update(operacao.id, { signed_contract_url: file_url });
+      await editarOperacaoCampos(operacao.id, { signed_contract_url: file_url });
       await logAction({
         action: 'update', entity: 'Operation', entityId: operacao.id,
         description: `Contrato assinado anexado para ${operacao.client_name}`,
@@ -29,13 +30,8 @@ export default function ContratoAssinadoPanel({ operacao, onUpdate }) {
   const handleConfirm = async () => {
     setConfirming(true);
     try {
-      const today = new Date().toISOString().split('T')[0];
-      await base44.entities.Operation.update(operacao.id, {
-        contract_signed_confirmed: true,
-        contract_signed_date: today,
-        // Unlock: remove pending_contract status
-        status: operacao.status === 'pendente_contrato' ? 'ativo' : operacao.status,
-      });
+      // M5.1 — o status derivado da confirmação do contrato é decidido no servidor.
+      await registrarContratoAssinado(operacao.id, { confirmar: true });
       await logAction({
         action: 'update', entity: 'Operation', entityId: operacao.id,
         description: `Recebimento do contrato assinado confirmado para ${operacao.client_name}`,
@@ -47,17 +43,12 @@ export default function ContratoAssinadoPanel({ operacao, onUpdate }) {
   };
 
   const handleRemoveFile = async () => {
-    await base44.entities.Operation.update(operacao.id, { signed_contract_url: '' });
+    await editarOperacaoCampos(operacao.id, { signed_contract_url: '' });
     onUpdate();
   };
 
   const handleUnconfirm = async () => {
-    await base44.entities.Operation.update(operacao.id, {
-      contract_signed_confirmed: false,
-      contract_signed_date: null,
-      signed_contract_url: null,
-      status: 'pendente_contrato',
-    });
+    await registrarContratoAssinado(operacao.id, { confirmar: false });
     onUpdate();
   };
 
