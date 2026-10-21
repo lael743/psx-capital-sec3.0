@@ -1,19 +1,15 @@
-import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard, Users, TrendingUp, FileCheck, Calculator,
   CreditCard, Wallet, Bell, FileText, Calendar, Shield, Building2,
-  UserPlus, ChevronDown, LogOut, Settings, Menu, PenLine, Clock,
-  CheckCircle, FileBadge, Package, Receipt, Send, CalendarClock, Tag
+  UserPlus, PenLine, Clock, CheckCircle, FileBadge, Package, Receipt,
+  Send, CalendarClock, Tag, Settings
 } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
-import NotificationBell from '@/components/layout/NotificationBell';
 import { hasPageAccess } from '@/lib/pageAccess';
 import {
-  Sidebar, SidebarContent, SidebarFooter, SidebarGroup,
+  Sidebar, SidebarContent, SidebarGroup,
   SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton,
-  SidebarMenuItem, SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem,
-  SidebarRail, SidebarTrigger, useSidebar,
+  SidebarMenuItem, SidebarRail, SidebarTrigger,
 } from '@/components/ui/sidebar';
 
 const ICON_MAP = {
@@ -139,54 +135,6 @@ function filterGroups(user) {
   }).filter(Boolean);
 }
 
-function SidebarUserFooter({ user }) {
-  const [open, setOpen] = useState(false);
-
-  return (
-    <SidebarFooter>
-      <NotificationBell />
-      <div className="relative">
-        <SidebarMenuButton
-          onClick={() => setOpen(!open)}
-          className="w-full"
-          tooltip={user?.full_name || 'Usuário'}
-        >
-          <div className="w-6 h-6 rounded-full bg-[hsl(43,65%,47%)] flex items-center justify-center shrink-0">
-            <span className="text-[10px] font-bold text-black">
-              {user?.full_name?.[0]?.toUpperCase() || 'U'}
-            </span>
-          </div>
-          <span className="flex-1 truncate text-sm">{user?.full_name || 'Usuário'}</span>
-          <ChevronDown className={`w-3.5 h-3.5 transition-transform shrink-0 ${open ? 'rotate-180' : ''}`} />
-        </SidebarMenuButton>
-        {open && (
-          <div className="absolute bottom-full left-2 right-2 mb-1 bg-white border border-border rounded-xl shadow-xl py-1 z-50">
-            <div className="px-3 py-2 border-b border-border">
-              <p className="text-xs font-semibold truncate">{user?.full_name}</p>
-              <p className="text-[11px] text-muted-foreground truncate">{user?.email}</p>
-            </div>
-            {user?.role === 'admin' && (
-              <Link
-                to="/configuracoes"
-                onClick={() => setOpen(false)}
-                className="flex items-center gap-2 px-3 py-2 text-xs text-foreground/70 hover:text-foreground hover:bg-gray-50"
-              >
-                <Settings className="w-3.5 h-3.5" /> Configurações
-              </Link>
-            )}
-            <button
-              onClick={() => base44.auth.logout()}
-              className="flex items-center gap-2 px-3 py-2 text-xs text-red-500 hover:bg-red-50 w-full text-left"
-            >
-              <LogOut className="w-3.5 h-3.5" /> Sair
-            </button>
-          </div>
-        )}
-      </div>
-    </SidebarFooter>
-  );
-}
-
 export default function AppSidebar({ user }) {
   const groups = filterGroups(user);
 
@@ -214,8 +162,6 @@ export default function AppSidebar({ user }) {
         ))}
       </SidebarContent>
 
-      {/* Usuário */}
-      <SidebarUserFooter user={user} />
       <SidebarRail />
     </Sidebar>
   );

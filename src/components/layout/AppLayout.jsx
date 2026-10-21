@@ -3,6 +3,7 @@ import { Outlet, useNavigate } from 'react-router-dom';
 import { base44 } from '@/api/base44Client';
 import { SidebarProvider, SidebarInset, SidebarTrigger } from '@/components/ui/sidebar';
 import AppSidebar from './AppSidebar';
+import TopbarActions from './TopbarActions';
 
 export default function AppLayout() {
   const [user, setUser] = useState(null);
@@ -47,9 +48,9 @@ export default function AppLayout() {
       <div className="flex h-screen w-full overflow-hidden bg-background font-inter">
         <AppSidebar user={user} />
         <SidebarInset className="flex flex-col">
-          {/* Header bar sutil com trigger */}
-          <header className="flex items-center h-12 px-4 border-b border-border shrink-0 bg-[hsl(var(--border))]">
-            
+          {/* Topbar: ações do usuário no canto superior direito */}
+          <header className="flex items-center justify-end gap-2 h-12 px-4 border-b border-border shrink-0 bg-card">
+            <TopbarActions user={user} />
           </header>
           <div className="flex-1 overflow-auto">
             <Outlet />

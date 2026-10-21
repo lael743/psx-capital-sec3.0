@@ -99,7 +99,7 @@ export default function NotificationBell() {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(v => !v)}
-        className="relative p-2 rounded-lg text-sidebar-foreground/50 hover:text-sidebar-foreground hover:bg-sidebar-accent transition-colors"
+        className="relative p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
       >
         <Bell className="w-4 h-4" />
         {count > 0 && (
