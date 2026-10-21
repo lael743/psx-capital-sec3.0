@@ -1,0 +1,17 @@
+{
+  "name": "TravaCampoTeste",
+  "type": "object",
+  "properties": {
+    "campo_travado": {
+      "type": "string",
+      "rls": {
+        "update": {
+          "data.campo_travado": "___nunca___"
+        }
+      }
+    },
+    "campo_livre": {
+      "type": "string"
+    }
+  }
+}

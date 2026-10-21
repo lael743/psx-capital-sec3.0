@@ -242,12 +242,18 @@ function pendenciasDeAvanco(etapaAtual, operacao, titulos, contexto) {
   }
 
   if (etapaAtual === 'pagamento') {
-    if (tipo === 'assinatura') {
-      if (!operacao.asaas_subscription_id && !operacao.asaas_payment_id && !contexto.temVinculoAssinatura) {
-        bloqueios.push('Emita a assinatura/cobrança no Asaas antes de finalizar.');
-      }
-    } else if (operacao.payment_executed !== true) {
-      bloqueios.push('O repasse ao cliente ainda não foi executado.');
+    // M5.1 — FECHAMENTO EXIGE O REPASSE EXECUTADO, EM TODAS AS MODALIDADES.
+    // `pagamento` é a etapa em que o valor sai da conta da PSX para o cedente
+    // (executeOperationDisbursement debita o banco, lança o caixa e grava
+    // payment_executed). `finalizada` é a conclusão dessa entrega.
+    // A cobrança/assinatura Asaas é a ORIGEM da receita futura do sacado, não
+    // prova de repasse — inclusive na assinatura, cujo wizard só valida com
+    // valor_antecipacao > 0, ou seja, há antecipação a repassar.
+    if (operacao.payment_executed !== true) {
+      bloqueios.push('O repasse ao cedente ainda não foi executado.');
+    }
+    if (tipo === 'assinatura' && !operacao.asaas_subscription_id && !contexto.temVinculoAssinatura) {
+      avisos.push('Assinatura/cobrança Asaas ainda não emitida (não substitui o repasse).');
     }
   }
 
