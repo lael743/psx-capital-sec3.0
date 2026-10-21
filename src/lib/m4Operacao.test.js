@@ -50,7 +50,10 @@ function criarApi({ falharNoTitulo = 0 } = {}) {
           criados += 1;
           if (falharNoTitulo && criados === falharNoTitulo) throw new Error('falha simulada ao gravar título');
         }
-        return col.create(d);
+        // O servidor (operacaoEditar → criar) define o estado inicial: o corpo
+        // não manda `etapa` nem `status`.
+        const dados = nome === 'Operation' ? { ...d, etapa: 'nova', status: 'ativo', amount_paid: 0 } : d;
+        return col.create(dados);
       },
       updateMany: (q, u) => col.updateWhere(q, u),
       update: (id, patch) => col.updateWhere({ id }, { $set: patch }),
@@ -386,8 +389,11 @@ test('M4.11 — payload de edição omite os campos do recebimento (M2/M3)', () 
   const ctx = ctxDe(form, 'inverso');
 
   const criacao = montarPayloadOperacao({ resumo, form, ctx, editando: false, numeroOperacao: 7 });
-  assert.equal(criacao.etapa, 'nova');
-  assert.equal(criacao.status, 'ativo');
+  // O estado inicial é do SERVIDOR (`operacaoEditar` recusa etapa/status no
+  // corpo): mandá-los fazia a criação inteira falhar com 403.
+  assert.equal('etapa' in criacao, false, 'criação não envia etapa');
+  assert.equal('status' in criacao, false, 'criação não envia status');
+  assert.equal(criacao.numero_operacao, 7);
   assert.equal(criacao.amount_paid, 0);
 
   const edicao = montarPayloadOperacao({ resumo, form, ctx, editando: true });

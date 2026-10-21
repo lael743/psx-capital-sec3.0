@@ -222,13 +222,11 @@ export function montarPayloadOperacao({ resumo, form, ctx, editando, numeroOpera
 
   return {
     ...base,
-    // Estado inicial coerente: a operação foi CONFIRMADA pelo wizard, então
-    // nasce 'nova' (workflow real de formalização) e ativa. Antes nascia
-    // 'rascunho' com status 'ativo' — obrigação real escondida do Dashboard e
-    // dos títulos, mas contada como ativa no limite do cliente.
-    etapa: 'nova',
+    // Estado inicial NÃO viaja no corpo: `operacaoEditar` recusa `etapa` e
+    // `status` vindos do navegador e grava "nova" + "ativo" por conta própria
+    // (criação nasce sempre assim). Enviá-los fazia TODA criação de operação
+    // ser recusada com 403. Aqui só vão os dados que a tela realmente coleta.
     numero_operacao: numeroOperacao,
-    status: 'ativo',
     amount_paid: 0,
     cheques_compensados_total: 0,
     realized_profit: 0,
