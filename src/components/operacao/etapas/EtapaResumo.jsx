@@ -1,4 +1,3 @@
-import EtapaCabecalho from '@/components/operacao/etapas/EtapaCabecalho';
 import TitulosGrade from '@/components/operacao/etapas/TitulosGrade';
 import { labelProduto } from '@/lib/produtoLabel';
 import { formatCurrency, formatDate } from '@/lib/finance';
@@ -16,24 +15,16 @@ function Campo({ label, valor }) {
  * ETAPA 1 — Resumo da operação com os títulos em grade detalhada.
  * É também a tela do rascunho: o que foi salvo, pronto para entrar no fluxo.
  */
-export default function EtapaResumo({ operacao, cheques = [], client, mostrarCabecalho = true }) {
+export default function EtapaResumo({ operacao, cheques = [], client }) {
   const emRascunho = operacao.etapa === 'rascunho' || !operacao.etapa;
   const tarifas = (operacao.tarifa_operacao || 0) + (operacao.tarifa_por_titulo || 0) * cheques.length;
 
   return (
     <div className="space-y-3">
-      {mostrarCabecalho && (
-        <EtapaCabecalho
-          numero={1}
-          titulo="Resumo da operação"
-          descricao="Confira o cadastro e os títulos em detalhe. Ajustes de títulos, cedente e condições são feitos na Etapa 3."
-        />
-      )}
-
       {emRascunho && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 text-xs text-amber-800">
           <strong>Rascunho.</strong> A operação está salva e ainda não entrou no fluxo. Use
-          “Iniciar fluxo da operação” para começar as etapas.
+          “Avançar” para começar as etapas.
         </div>
       )}
 

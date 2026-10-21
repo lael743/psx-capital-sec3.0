@@ -1,12 +1,11 @@
 import { Check } from 'lucide-react';
 import { STAGES } from '@/lib/operationWorkflow';
 
-/** As 7 etapas da operação. "Rascunho" é o estado anterior ao fluxo, não uma etapa. */
-const ETAPAS = STAGES.filter((s) => s.key !== 'rascunho');
+/** As 7 etapas da operação, na ordem em que acontecem. */
+const ETAPAS = STAGES;
 
 export default function WorkflowStepper({ currentEtapa }) {
-  const efetiva = currentEtapa === 'rascunho' ? 'nova' : currentEtapa;
-  const currentIndex = ETAPAS.findIndex((s) => s.key === efetiva);
+  const currentIndex = ETAPAS.findIndex((s) => s.key === (currentEtapa || 'rascunho'));
 
   return (
     <div className="bg-white border border-border rounded-xl p-4 overflow-x-auto">

@@ -1,4 +1,3 @@
-import EtapaCabecalho from '@/components/operacao/etapas/EtapaCabecalho';
 import EtapaResumo from '@/components/operacao/etapas/EtapaResumo';
 import RepasseRegistrado from '@/components/operacao/RepasseRegistrado';
 import CessaoVinculoPanel from '@/components/operacao/CessaoVinculoPanel';
@@ -15,15 +14,9 @@ export default function EtapaFinal({ operacao, cheques = [], payments = [], logs
 
   return (
     <div className="space-y-3">
-      <EtapaCabecalho
-        numero={7}
-        titulo="Operação finalizada"
-        descricao="Dossiê completo: condições, repasse, títulos, parcelas, recebimentos e histórico das etapas."
-      />
-
       {operacao.payment_executed === true && <RepasseRegistrado operacao={operacao} />}
 
-      <EtapaResumo operacao={operacao} cheques={cheques} client={client} mostrarCabecalho={false} />
+      <EtapaResumo operacao={operacao} cheques={cheques} client={client} />
 
       <div className="bg-white border border-border rounded-xl p-4 space-y-2">
         <h3 className="text-sm font-bold">Parcelas</h3>

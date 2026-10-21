@@ -6,7 +6,7 @@ function getSettings() {
   try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); } catch { return {}; }
 }
 
-export default function OperacaoResumoSidebar({ operacao, cheques = [], onEditConditions }) {
+export default function OperacaoResumoSidebar({ operacao, cheques = [] }) {
   const settings = getSettings();
   const startDate = operacao.start_date || today();
   const rate = operacao.rate || 0;
@@ -64,14 +64,6 @@ export default function OperacaoResumoSidebar({ operacao, cheques = [], onEditCo
           <span className="font-medium">{totals.prazoMedio.toFixed(1)} dias</span>
         </div>
       </div>
-      {onEditConditions && (
-        <button
-          onClick={onEditConditions}
-          className="w-full text-xs font-semibold border border-border rounded-lg py-2 hover:bg-gray-50 transition-colors"
-        >
-          Editar Condições
-        </button>
-      )}
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircle, XCircle, FileEdit, Send, RotateCcw, AlertTriangle } from 'lucide-react';
+import { CheckCircle, XCircle, FileEdit, ArrowRight, ArrowLeft, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { getNextStage, acoesDisponiveis, ACOES, MOTIVO_MINIMO } from '@/lib/operationWorkflow';
 import { transicionarOperacao } from '@/lib/workflowOps';
@@ -13,7 +13,7 @@ import { transicionarOperacao } from '@/lib/workflowOps';
  * uma gravação direta da etapa. Recusas (pré-requisito faltando, efeito
  * financeiro já existente, etapa alterada por outra pessoa) aparecem aqui.
  */
-export default function WorkflowActions({ operacao, onUpdate }) {
+export default function WorkflowActions({ operacao, podeEditar = false, onUpdate }) {
   const navigate = useNavigate();
   const { user } = useAuth();
   const [loading, setLoading] = useState(false);
@@ -22,7 +22,7 @@ export default function WorkflowActions({ operacao, onUpdate }) {
   const [rejeicao, setRejeicao] = useState(null);
   const [motivo, setMotivo] = useState('');
 
-  const etapa = operacao?.etapa || 'nova';
+  const etapa = operacao?.etapa || 'rascunho';
   const nextStage = getNextStage(etapa);
   const disponiveis = acoesDisponiveis(operacao || {}, user);
   const podeAvancar = disponiveis.includes(ACOES.AVANCAR) && !!nextStage;
@@ -42,7 +42,7 @@ export default function WorkflowActions({ operacao, onUpdate }) {
         operacaoId: operacao.id,
         acao,
         motivo: motivoInformado,
-        etapaObservada: operacao.etapa || 'nova',
+        etapaObservada: operacao.etapa || 'rascunho',
       });
     } finally {
       setLoading(false);
@@ -51,7 +51,7 @@ export default function WorkflowActions({ operacao, onUpdate }) {
       setErro(resposta.erro || 'Transição não permitida.');
       // A recusa pode ser "a operação já está em outra etapa": recarrega para a
       // tela mostrar a etapa real em vez de repetir o mesmo pedido.
-      if (resposta.etapa && resposta.etapa !== (operacao.etapa || 'nova')) onUpdate?.();
+      if (resposta.etapa && resposta.etapa !== (operacao.etapa || 'rascunho')) onUpdate?.();
       return;
     }
     setAvisos(Array.isArray(resposta.avisos) ? resposta.avisos : []);
@@ -78,25 +78,27 @@ export default function WorkflowActions({ operacao, onUpdate }) {
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap gap-2">
-        {etapa === 'analise_credito' && disponiveis.length > 0 && (
-          <Btn onClick={() => navigate(`/operacoes/${operacao.id}/editar`)} label="Editar" icon={FileEdit} color="border-border hover:bg-gray-50" />
-        )}
         {podeAvancar && (
           <Btn
             onClick={() => executar(ACOES.AVANCAR)}
-            label={etapa === 'rascunho' ? 'Iniciar fluxo da operação' : `Enviar para ${nextStage.label}`}
-            icon={Send}
+            label="Avançar"
+            icon={ArrowRight}
             color="border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100"
           />
         )}
         {podeRascunho && (
-          <Btn
+          <button
             onClick={() => executar(ACOES.VOLTAR_RASCUNHO)}
-            label="Voltar para rascunho"
-            icon={RotateCcw}
-            color="border-amber-200 text-amber-700 bg-amber-50 hover:bg-amber-100"
-            title="Só é permitido quando a operação não tem nenhum efeito financeiro."
-          />
+            disabled={loading}
+            title="Retroceder para rascunho"
+            aria-label="Retroceder para rascunho"
+            className="inline-flex items-center justify-center w-9 h-9 border border-amber-200 text-amber-700 bg-amber-50 rounded-lg hover:bg-amber-100 transition-colors disabled:opacity-50"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+        )}
+        {podeEditar && (
+          <Btn onClick={() => navigate(`/operacoes/${operacao.id}/editar`)} label="Editar" icon={FileEdit} color="border-border hover:bg-gray-50" />
         )}
         {podeRejeitar && (
           <Btn

@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom';
 import { ScrollText } from 'lucide-react';
-import EtapaCabecalho from '@/components/operacao/etapas/EtapaCabecalho';
 import OperacaoDocumentosPanel from '@/components/operacao/OperacaoDocumentosPanel';
 import ContratoAssinadoPanel from '@/components/operacao/ContratoAssinadoPanel';
 
@@ -13,12 +12,6 @@ export default function EtapaDocumentos({ operacao, onUpdate }) {
 
   return (
     <div className="space-y-3">
-      <EtapaCabecalho
-        numero={4}
-        titulo="Formalização"
-        descricao="Gere os documentos da operação e anexe o que voltar assinado. O contrato é pré-requisito para seguir à etapa de assinaturas quando a operação exige contrato."
-      />
-
       <div className="bg-white border border-border rounded-xl p-4 flex items-center justify-between gap-3 flex-wrap">
         <div>
           <h3 className="text-sm font-bold">Gerar documentos</h3>

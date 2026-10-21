@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { base44 } from '@/api/base44Client';
 import { ShieldCheck, TrendingDown, Clock, Users } from 'lucide-react';
-import EtapaCabecalho from '@/components/operacao/etapas/EtapaCabecalho';
 import SacadoInfoCard from '@/components/operacao/SacadoInfoCard';
 import { analiseCredito, ROTULO_PONTUALIDADE } from '@/lib/analiseCredito';
 import { formatCurrency, today } from '@/lib/finance';
@@ -70,12 +69,6 @@ export default function EtapaAnalise({ operacao, client, cheques = [] }) {
 
   return (
     <div className="space-y-3">
-      <EtapaCabecalho
-        numero={2}
-        titulo="Análise de crédito"
-        descricao="Situação do cedente, limite disponível, pendências e o comportamento de pagamento comprovado pelos títulos já compensados."
-      />
-
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* Cedente e limite */}
         <div className="bg-white border border-border rounded-xl p-5 space-y-3">

@@ -29,7 +29,6 @@
 
 export const STAGES = [
   { key: 'rascunho', label: 'Rascunho' },
-  { key: 'nova', label: 'Nova' },
   { key: 'analise_credito', label: 'Análise de Crédito' },
   { key: 'confirmacao_titulos', label: 'Confirmação de Títulos' },
   { key: 'formalizacao', label: 'Formalização' },
@@ -72,22 +71,19 @@ const ADMIN = 'admin';
  * `perfil` é o mínimo exigido; o servidor sempre confere antes de aplicar.
  */
 export const TRANSICOES = Object.freeze([
-  { acao: ACOES.AVANCAR, de: 'rascunho', para: 'nova', perfil: OPERACIONAL },
-  { acao: ACOES.AVANCAR, de: 'nova', para: 'analise_credito', perfil: OPERACIONAL },
+  { acao: ACOES.AVANCAR, de: 'rascunho', para: 'analise_credito', perfil: OPERACIONAL },
   { acao: ACOES.AVANCAR, de: 'analise_credito', para: 'confirmacao_titulos', perfil: OPERACIONAL },
   { acao: ACOES.AVANCAR, de: 'confirmacao_titulos', para: 'formalizacao', perfil: OPERACIONAL },
   { acao: ACOES.AVANCAR, de: 'formalizacao', para: 'assinatura', perfil: OPERACIONAL },
   { acao: ACOES.AVANCAR, de: 'assinatura', para: 'pagamento', perfil: OPERACIONAL },
   { acao: ACOES.AVANCAR, de: 'pagamento', para: 'finalizada', perfil: OPERACIONAL },
   { acao: ACOES.REJEITAR, de: 'rascunho', para: 'rejeitada', perfil: OPERACIONAL },
-  { acao: ACOES.REJEITAR, de: 'nova', para: 'rejeitada', perfil: OPERACIONAL },
   { acao: ACOES.REJEITAR, de: 'analise_credito', para: 'rejeitada', perfil: OPERACIONAL },
   { acao: ACOES.REJEITAR, de: 'confirmacao_titulos', para: 'rejeitada', perfil: OPERACIONAL },
   { acao: ACOES.REJEITAR, de: 'formalizacao', para: 'rejeitada', perfil: OPERACIONAL },
   { acao: ACOES.REJEITAR, de: 'assinatura', para: 'rejeitada', perfil: OPERACIONAL },
   { acao: ACOES.REJEITAR, de: 'pagamento', para: 'rejeitada', perfil: OPERACIONAL },
   { acao: ACOES.REABRIR, de: 'rejeitada', para: 'rascunho', perfil: OPERACIONAL },
-  { acao: ACOES.VOLTAR_RASCUNHO, de: 'nova', para: 'rascunho', perfil: OPERACIONAL },
   { acao: ACOES.VOLTAR_RASCUNHO, de: 'analise_credito', para: 'rascunho', perfil: ADMIN },
   { acao: ACOES.VOLTAR_RASCUNHO, de: 'confirmacao_titulos', para: 'rascunho', perfil: ADMIN },
   { acao: ACOES.VOLTAR_RASCUNHO, de: 'formalizacao', para: 'rascunho', perfil: ADMIN },
@@ -97,9 +93,9 @@ export const TRANSICOES = Object.freeze([
 
 export const MOTIVO_MINIMO = 5;
 
-/** Etapa efetiva: registros antigos sem `etapa` são operações "nova" (M4). */
+/** Etapa efetiva: registros antigos sem `etapa` são operações em rascunho (M4). */
 export function normalizarEtapa(etapa) {
-  if (!etapa) return 'nova';
+  if (!etapa) return 'rascunho';
   return STAGES.some((s) => s.key === etapa) || etapa === 'rejeitada' ? etapa : 'desconhecida';
 }
 
@@ -201,7 +197,7 @@ function pendenciasDeAvanco(etapaAtual, operacao, titulos, contexto) {
   const ehAssinatura = tipo === 'assinatura';
   const somaTitulos = (titulos || []).reduce((s, t) => s + valorDoTitulo(t), 0);
 
-  if (etapaAtual === 'rascunho' || etapaAtual === 'nova') {
+  if (etapaAtual === 'rascunho') {
     if (ehAssinatura) {
       // Assinatura não nasce de título: nasce de valor antecipado ao cedente.
       if (!(numero(operacao.valor_antecipacao) > 0)) {
@@ -225,10 +221,6 @@ function pendenciasDeAvanco(etapaAtual, operacao, titulos, contexto) {
       const exposicao = numero(contexto.exposicao) + numero(operacao.total_receivable);
       if (config.block_over_limit !== false && limite > 0 && exposicao > limite) {
         bloqueios.push(`Limite de crédito excedido: exposição de ${exposicao.toFixed(2)} para limite de ${limite.toFixed(2)}.`);
-      }
-      const faltando = ['doc_rg_url', 'doc_cnh_url', 'doc_income_url', 'doc_address_url'].filter((c) => !cliente[c]);
-      if (faltando.length > 0 && config.validate_cpf_cnpj !== false) {
-        avisos.push(`Documentação incompleta do cedente (${faltando.length} documento(s) ausente(s)).`);
       }
     }
   }
@@ -257,10 +249,6 @@ function pendenciasDeAvanco(etapaAtual, operacao, titulos, contexto) {
       if (!(titulos || []).length || somaTitulos <= 0) {
         bloqueios.push('A operação precisa de títulos válidos para ser formalizada.');
       }
-      const agenda = Array.isArray(operacao.installment_schedule) ? operacao.installment_schedule : [];
-      if (agenda.length === 0 || !agenda.every((p) => p && p.id)) {
-        bloqueios.push('A agenda de parcelas está incompleta; salve a operação novamente antes de formalizar.');
-      }
     }
   }
 
@@ -286,7 +274,7 @@ function pendenciasDeAvanco(etapaAtual, operacao, titulos, contexto) {
       bloqueios.push('O repasse ao cedente ainda não foi executado.');
     }
     if (tipo === 'assinatura' && !operacao.asaas_subscription_id && !contexto.temVinculoAssinatura) {
-      avisos.push('Assinatura/cobrança Asaas ainda não emitida (não substitui o repasse).');
+      avisos.push('A cobrança da assinatura ainda não foi emitida (isso não substitui o repasse ao cedente).');
     }
   }
 

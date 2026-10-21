@@ -25,7 +25,6 @@ import { ViewModeProvider } from '@/lib/viewMode';
  */
 const TELAS = {
   rascunho: EtapaResumo,
-  nova: EtapaResumo,
   analise_credito: EtapaAnalise,
   confirmacao_titulos: EtapaTitulos,
   formalizacao: EtapaDocumentos,
@@ -35,7 +34,7 @@ const TELAS = {
 };
 
 /** Etapas em que o conteúdo da operação ainda pode ser ajustado. */
-const EDICAO_LIBERADA = ['rascunho', 'nova', 'analise_credito', 'confirmacao_titulos', 'formalizacao'];
+const EDICAO_LIBERADA = ['rascunho', 'analise_credito', 'confirmacao_titulos'];
 
 export default function OperacaoDetail() {
   const { id } = useParams();
@@ -135,7 +134,7 @@ export default function OperacaoDetail() {
 
         {!isFinalizada && !isRejected && (
           <div className="bg-white border border-border rounded-xl p-3">
-            <WorkflowActions operacao={op} onUpdate={load} />
+            <WorkflowActions operacao={op} podeEditar={podeEditar} onUpdate={load} />
           </div>
         )}
 
@@ -162,11 +161,7 @@ export default function OperacaoDetail() {
               onUpdate={load}
             />
           </div>
-          <OperacaoResumoSidebar
-            operacao={op}
-            cheques={cheques}
-            onEditConditions={podeEditar ? () => navigate(`/operacoes/${id}/editar`) : null}
-          />
+          <OperacaoResumoSidebar operacao={op} cheques={cheques} />
         </div>
       </div>
     </ViewModeProvider>

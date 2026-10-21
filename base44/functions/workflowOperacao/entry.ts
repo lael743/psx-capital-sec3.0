@@ -305,7 +305,7 @@ export default async function (req) {
 
     // 7. Compare-and-swap da etapa.
     const filtro = { id: operacaoId, $or: [{ etapa: decisao.etapaAtual }] };
-    if (decisao.etapaAtual === 'nova') filtro.$or.push({ etapa: { $exists: false } });
+    if (decisao.etapaAtual === 'rascunho') filtro.$or.push({ etapa: { $exists: false } });
 
     const aplicacao = await servico.entities.Operation.updateMany(filtro, {
       $set: { etapa: decisao.destino },
