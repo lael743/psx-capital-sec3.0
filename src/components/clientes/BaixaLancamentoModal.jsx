@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { base44 } from '@/api/base44Client';
 import { X, CheckCircle, Loader2, AlertTriangle, CalendarClock } from 'lucide-react';
 import CurrencyInput from '@/components/ui/CurrencyInput';
-import { calcLateInterest, daysOverdue, formatCurrency, today } from '@/lib/finance';
+import { daysOverdue, formatCurrency, today } from '@/lib/finance';
 import { registrarRecebimento, novaChaveRecebimento } from '@/lib/recebimentoOps';
 
 export default function BaixaLancamentoModal({ lancamento, client, onClose, onSaved }) {
