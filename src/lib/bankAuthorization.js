@@ -81,6 +81,9 @@ export const ACOES_BANCARIAS = Object.freeze({
   // direto pelo navegador, sem identidade de evento e sem autorização.
   RECEBER_PAGAMENTO: 'receber_pagamento',
   REGISTRAR_BAIXA: 'registrar_baixa',
+  // M6 — baixa individual de título pela Central de Contas a Receber. Ação
+  // própria porque a tela é própria: exige a página da central, não a de cheques.
+  BAIXAR_TITULO: 'baixar_titulo',
 });
 
 /** Chave de página usada pelo controle de acesso existente (pageAccess.js). */
@@ -92,6 +95,8 @@ export const PAGINA_OPERACOES = 'operacoes';
 export const PAGINA_CLIENTES = 'clientes';
 export const PAGINA_COBRANCA = 'cobranca';
 export const PAGINAS_RECEBIMENTO = Object.freeze([PAGINA_OPERACOES, PAGINA_CLIENTES, PAGINA_COBRANCA]);
+/** M6 — Central de Contas a Receber (tela /pagamentos). */
+export const PAGINA_CONTAS_A_RECEBER = 'pagamentos';
 
 /**
  * M1 — ações de cheque valem com QUALQUER uma das telas que as disparam:
@@ -114,6 +119,9 @@ const PAGINAS_POR_ACAO = Object.freeze({
   // recebimento. Qualquer uma das três telas autoriza.
   [ACOES_BANCARIAS.RECEBER_PAGAMENTO]: PAGINAS_RECEBIMENTO,
   [ACOES_BANCARIAS.REGISTRAR_BAIXA]: PAGINAS_RECEBIMENTO,
+  // M6 — a baixa individual de título nasce na própria Central de Contas a
+  // Receber: é a página da central que a concede, nada além dela.
+  [ACOES_BANCARIAS.BAIXAR_TITULO]: Object.freeze([PAGINA_CONTAS_A_RECEBER]),
 });
 
 /** Ações que um operador com a página liberada pode executar. */
