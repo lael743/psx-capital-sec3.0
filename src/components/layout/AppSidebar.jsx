@@ -163,7 +163,7 @@ export default function AppSidebar({ user }) {
         )}
       </SidebarContent>
 
-      <SidebarRail />
+      <SidebarRail className="bg-[#5a4f48]" />
     </Sidebar>);
 
 }
