@@ -142,7 +142,7 @@ export default function AppSidebar({ user }) {
   return (
     <Sidebar collapsible="icon" className="border-r border-sidebar-border">
       {/* Logo */}
-      <SidebarHeader className="py-4 bg-[#000000] px-3 rounded text-[#4e3636]">
+      <SidebarHeader className="py-4 bg-[#000000] px-3 rounded text-[#ffffff]">
         <div className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
           <Link to="/" className="flex items-center shrink-0">
             <div className="flex items-center">
