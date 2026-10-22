@@ -157,7 +157,7 @@ export default function AppSidebar({ user }) {
       </SidebarHeader>
 
       {/* Navegação */}
-      <SidebarContent className="bg-[#000000] text-[#bdb574]">
+      <SidebarContent className="bg-[#000000] text-[#ece28b]">
         {groups.map((group, i) =>
         <NavGroup key={i} group={group} />
         )}
