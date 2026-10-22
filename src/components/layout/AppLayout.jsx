@@ -49,7 +49,7 @@ export default function AppLayout() {
         <AppSidebar user={user} />
         <SidebarInset className="flex flex-col">
           {/* Topbar: ações do usuário no canto superior direito */}
-          <header className="flex items-center justify-end gap-2 h-12 border-b border-border shrink-0 opacity-100 bg-[#000000] text-[#ffffff] py-4 px-4">
+          <header className="flex items-center justify-end gap-2 h-12 border-b border-border shrink-0 opacity-100 bg-[#000000] text-[#ffffff] px-4 py-2 my-2">
             <TopbarActions user={user} />
           </header>
           <div className="flex-1 overflow-auto">
