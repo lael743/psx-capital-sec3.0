@@ -101,7 +101,7 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="md:p-6 max-w-7xl space-y-4 md:space-y-6 px-4 py-4">
+    <div className="md:p-6 max-w-7xl space-y-4 md:space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1">
         <div>
           <h1 className="text-2xl font-bold text-foreground tracking-tight">Dashboard</h1>
