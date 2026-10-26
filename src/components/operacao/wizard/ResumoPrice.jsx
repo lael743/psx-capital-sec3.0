@@ -7,15 +7,16 @@ import { formatCurrency } from '@/lib/finance';
  *   Principal        = Σ amortização (valor presente financiado)
  *   Juros (Price)    = Σ juros do cronograma
  *   Total a Pagar    = Σ prestações (face)
- *   Lucro Projetado  = Total a Pagar − Principal (= juros)
- *   ROI              = juros ÷ principal
+ *   Lucro Projetado  = Total a Pagar − Principal (= juros + tarifas embutidas)
+ *   ROI              = lucro projetado ÷ principal
  *   Prestação (PMT)  = Total a Pagar ÷ nº de parcelas
  */
 export default function ResumoPrice({ totais, quantidade }) {
   const principal = totais?.amortizacao || 0;
   const juros = totais?.juros || 0;
   const totalAPagar = totais?.face || 0;
-  const roi = principal > 0 ? (juros / principal) * 100 : 0;
+  // O ROI tem de fechar com o LUCRO exibido ao lado (juros + tarifas cobradas).
+  const roi = principal > 0 ? ((totalAPagar - principal) / principal) * 100 : 0;
   const pmt = quantidade > 0 ? totalAPagar / quantidade : 0;
 
   const itens = [

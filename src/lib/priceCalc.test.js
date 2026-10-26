@@ -30,7 +30,7 @@ function titulosDe(linhas) {
     vencimento: l.vencimento,
     valor_face: String(l.face),
     valor_liquido: String(l.amortizacao),
-    outras_despesas: '',
+    outras_despesas: String(l.despesa),
   }));
 }
 
@@ -110,11 +110,19 @@ test('Price: tarifas entram uma única vez e o líquido fecha com o repasse', ()
   });
 
   assert.equal(totais.despesa, 500, '300 de tarifa fixa + 4 × 50 por título');
-  assert.equal(base, 10500, 'o valor presente é o repasse mais as tarifas');
-  assert.equal(totais.amortizacao, 10500);
+  assert.equal(base, 10000, 'o valor presente é o repasse: as tarifas não são financiadas');
+  assert.equal(totais.amortizacao, 10000);
   assert.equal(totais.liquido, 10000, 'o cliente recebe exatamente o repasse solicitado');
   assert.ok(facesIguais(linhas));
-  assert.equal(totais.face, round2(10500 + totais.juros));
+  assert.equal(
+    totais.face,
+    round2(10000 + totais.juros + 500),
+    'as tarifas são SOMADAS à face final (cobrança), não descontadas do líquido',
+  );
+  linhas.forEach((l) => {
+    assert.equal(l.face, round2(l.amortizacao + l.juros + l.despesa), 'face = amortização + juros + tarifa da parcela');
+    assert.equal(l.liquido, l.amortizacao, 'o líquido da parcela é o repasse, sem descontar tarifa');
+  });
 
   const resumo = resumoFinanceiro({ titulos: titulosDe(linhas), form: formDe({ tarifaOperacao: 300, tarifaPorTitulo: 50 }), calcMode: 'price' });
 
@@ -139,7 +147,7 @@ test('Price: inverso parte da parcela conhecida e volta ao mesmo valor', () => {
   assert.equal(porParcela.linhas.length, 4);
   porParcela.linhas.forEach((l) => assert.equal(l.face, porParcela.linhas[0].face, 'todas as faces são iguais'));
   assert.ok(Math.abs(porParcela.linhas[0].face - 3000) <= 0.01, 'a face reproduz a parcela informada');
-  assert.equal(porParcela.repasse, round2(porParcela.base - 200));
+  assert.equal(porParcela.repasse, porParcela.base, 'o repasse é o valor presente (tarifas fora do principal)');
 
   const porRepasse = cronogramaPriceOperacao({
     vencimentos, startDate: START, taxaMensalPct: TAXA, interestType: TIPO_JUROS,
@@ -207,8 +215,8 @@ test('Price: tabela, resumo, títulos e cronograma mostram os mesmos números', 
 
   assert.equal(
     round2(cronograma.reduce((s, p) => s + p.principal, 0)),
-    12360,
-    'Σ principal gravado = repasse + tarifas (valor presente)',
+    12000,
+    'Σ principal gravado = repasse solicitado',
   );
   assert.equal(
     round2(cronograma.reduce((s, p) => s + p.value, 0)),
