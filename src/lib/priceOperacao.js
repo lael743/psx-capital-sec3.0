@@ -143,6 +143,7 @@ export function cronogramaPriceOperacao({
       face: parcela,
       juros: round2(parcela - amortizacao),
       amortizacao,
+      saldo: round2(base - somaAmortizacao),
       despesa,
       liquido: round2(amortizacao - despesa),
     };
@@ -197,6 +198,12 @@ export function linhasPriceDeTitulos(titulos = [], {
   });
 
   const totalAmortizacao = round2(linhas.reduce((s, l) => s + l.amortizacao, 0));
+  // Saldo devedor da tabela de amortização: o que ainda falta amortizar.
+  let acumulado = 0;
+  linhas.forEach((l) => {
+    acumulado = round2(acumulado + l.amortizacao);
+    l.saldo = round2(totalAmortizacao - acumulado);
+  });
   const totalDespesas = round2(linhas.reduce((s, l) => s + l.despesa, 0));
   fecharResiduoLiquido(linhas, round2(totalAmortizacao - totalDespesas));
 

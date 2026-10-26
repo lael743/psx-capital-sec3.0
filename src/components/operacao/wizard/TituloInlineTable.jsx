@@ -62,13 +62,14 @@ const CALCMODE_INFO = {
 /** Em que formatos a coluna calculada mostra o LÍQUIDO (nos demais, a face). */
 const MOSTRA_LIQUIDO = [DESAGIO_FACE, PRICE, 'emprestimo', 'capital_desagio'];
 
-export default function TituloInlineTable({ titulos, onChange, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = DESAGIO_FACE }) {
+export default function TituloInlineTable({ titulos, onChange, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode = DESAGIO_FACE, tipoPadrao }) {
   const update = (idx, field, value) => {
     const next = titulos.map((t, i) => (i === idx ? { ...t, [field]: value } : t));
     onChange(next);
   };
 
-  const addRow = () => onChange([...titulos, emptyTitulo()]);
+  // A linha nova já nasce com o tipo do produto da operação (cheque/boleto/duplicata).
+  const addRow = () => onChange([...titulos, { ...emptyTitulo(), tipo: tipoPadrao || 'cheque' }]);
   const removeRow = (idx) => onChange(titulos.filter((_, i) => i !== idx));
 
   const totals = calcTitulosTotais(titulos, startDate, rate, interestType, floatDias, arredondarTaxaDiaria, calcMode);

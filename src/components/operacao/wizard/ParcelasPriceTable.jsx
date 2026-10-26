@@ -23,6 +23,7 @@ export default function ParcelasPriceTable({ linhas = [], totais, onVencimentoCh
               <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Parcela (Face)</th>
               <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Juros</th>
               <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Amortização</th>
+              <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Saldo Devedor</th>
               <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Despesas</th>
               <th className="px-3 py-2.5 text-right font-semibold text-muted-foreground uppercase tracking-wider">Líquido</th>
             </tr>
@@ -45,6 +46,7 @@ export default function ParcelasPriceTable({ linhas = [], totais, onVencimentoCh
                 <td className="px-3 py-2 text-right tabular-nums font-semibold">{formatCurrency(l.face)}</td>
                 <td className="px-3 py-2 text-right text-red-600 tabular-nums">{formatCurrency(l.juros)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(l.amortizacao)}</td>
+                <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{formatCurrency(l.saldo || 0)}</td>
                 <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{l.despesa ? formatCurrency(l.despesa) : '—'}</td>
                 <td className="px-3 py-2 text-right text-emerald-600 font-semibold tabular-nums">{formatCurrency(l.liquido)}</td>
               </tr>
@@ -58,6 +60,7 @@ export default function ParcelasPriceTable({ linhas = [], totais, onVencimentoCh
               <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(total.face)}</td>
               <td className="px-3 py-2.5 text-right text-red-600 tabular-nums">{formatCurrency(total.juros)}</td>
               <td className="px-3 py-2.5 text-right tabular-nums">{formatCurrency(total.amortizacao)}</td>
+              <td />
               <td className="px-3 py-2.5 text-right text-muted-foreground tabular-nums">{formatCurrency(total.despesa)}</td>
               <td className="px-3 py-2.5 text-right text-emerald-600 tabular-nums">{formatCurrency(total.liquido)}</td>
             </tr>

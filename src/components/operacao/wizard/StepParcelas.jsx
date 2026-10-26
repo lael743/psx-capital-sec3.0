@@ -9,6 +9,7 @@ import {
   cronogramaPriceOperacao, datasParcelas, linhasPriceDeTitulos, rateioDespesas,
 } from '@/lib/priceOperacao';
 import ParcelasPriceTable from './ParcelasPriceTable';
+import ResumoPrice from './ResumoPrice';
 import { RefreshCw, AlertTriangle, Calendar } from 'lucide-react';
 
 function addDays(dateStr, days) {
@@ -276,6 +277,11 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
           <RefreshCw className="w-3.5 h-3.5" /> Gerar Parcelas
         </button>
       </div>
+
+      {/* Resumo Price — principal, juros, total, lucro, ROI e prestação */}
+      {titulos.length > 0 && isPrice &&
+      <ResumoPrice totais={priceData.totais} quantidade={priceData.linhas.length} />
+      }
 
       {/* Parcelas table — no Parcelado, a tabela Price (juros/amortização/despesas) */}
       {titulos.length > 0 && isPrice &&

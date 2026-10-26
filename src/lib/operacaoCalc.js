@@ -28,18 +28,18 @@ function round2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
 /**
  * Calcula deságio de um título usando desconto comercial.
  * deságio = valor_face × (taxa/100) × (dias/30)
+ *
+ * O parâmetro `arredondarTaxaDiaria` existe só por compatibilidade de assinatura:
+ * o arredondamento da taxa diária é um artifício da ENTRADA do cálculo inverso
+ * (ver calcTituloRow), nunca do deságio sobre a face. No sentido padrão a conta
+ * é a mesma com o arredondamento ligado ou desligado — face 1.000 a 4% por 30
+ * dias continua líquido 960,00.
  */
-export function calcDesagioTitulo(valorFace, taxaMensal, dias, interestType, arredondarTaxaDiaria) {
+export function calcDesagioTitulo(valorFace, taxaMensal, dias, interestType, _arredondarTaxaDiaria) {
   if (!valorFace || !taxaMensal || !dias || dias <= 0) return 0;
   if (interestType === 'composto') {
-    const dailyR = arredondarTaxaDiaria
-      ? Math.ceil((taxaMensal / 30) * 100) / 100 / 100
-      : taxaMensal / 100 / 30;
+    const dailyR = taxaMensal / 100 / 30;
     return round2(valorFace * (Math.pow(1 + dailyR, dias) - 1));
-  }
-  if (arredondarTaxaDiaria) {
-    const dailyRatePct = Math.ceil((taxaMensal / 30) * 100) / 100;
-    return round2(valorFace * (dailyRatePct / 100) * dias);
   }
   return round2(valorFace * (taxaMensal / 100) * (dias / 30));
 }
@@ -60,9 +60,17 @@ export function calcTituloRow(titulo, startDate, rate, interestType, floatDias, 
   if (modo === FACE_POR_REPASSE) {
     // Inverso — o valor digitado é o REPASSE desejado; a face é calculada.
     liquido = inputValor;
-    const taxaProp = (rate / 100) * (dias / 30);
-    const fator = 1 - taxaProp;
-    valorFace = fator > 0 ? round2(liquido / fator) : liquido;
+    if (arredondarTaxaDiaria) {
+      // Arredondamento da taxa: o cálculo inverso NÃO fraciona a taxa diária.
+      // 4% ÷ 30 = 0,1333…%/dia → 0,14%/dia, então
+      // face = repasse × (1 + 0,14% × dias) = 1.000 × 1,042 = 1.042,00.
+      const taxaDiaria = Math.ceil((rate / 30) * 100) / 100 / 100;
+      valorFace = round2(liquido * (1 + taxaDiaria * dias));
+    } else {
+      const taxaProp = (rate / 100) * (dias / 30);
+      const fator = 1 - taxaProp;
+      valorFace = fator > 0 ? round2(liquido / fator) : liquido;
+    }
     desagio = round2(valorFace - liquido);
   } else if (modo === PRICE) {
     // Parcelado — a linha já traz a parcela (face) e a amortização calculadas

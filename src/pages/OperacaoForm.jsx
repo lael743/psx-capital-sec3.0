@@ -8,7 +8,7 @@ import { formatCurrency, today } from '@/lib/finance';
 import { logAction } from '@/lib/audit';
 import { bloqueioEdicaoCompleta } from '@/lib/scheduleWrite';
 import { resumoFinanceiro, validarOperacao } from '@/lib/operacaoCalc';
-import { DESAGIO_FACE, PRICE, calcModeEfetivo, normalizarCalcMode } from '@/lib/formatosCalculo';
+import { DESAGIO_FACE, FACE_POR_REPASSE, PRICE, calcModeEfetivo, normalizarCalcMode } from '@/lib/formatosCalculo';
 import { montarPayloadOperacao, montarTitulosCheque, salvarOperacao, proximoNumeroOperacao } from '@/lib/operacaoSave';
 import { emptyTitulo } from '@/components/operacao/wizard/TituloInlineTable';
 import WizardStepper from '@/components/operacao/wizard/WizardStepper';
@@ -18,6 +18,7 @@ import StepDocumentos from '@/components/operacao/wizard/StepDocumentos';
 import StepResumo from '@/components/operacao/wizard/StepResumo';
 import StepParcelas from '@/components/operacao/wizard/StepParcelas';
 import StepAssinatura from '@/components/operacao/wizard/StepAssinatura';
+import FormatoCalculoSwitch from '@/components/operacao/wizard/FormatoCalculoSwitch';
 import NovoCedenteDrawer from '@/components/cedente/NovoCedenteDrawer';
 
 const STORAGE_KEY = 'psx_company_settings';
@@ -234,10 +235,6 @@ export default function OperacaoForm() {
   const modoAtual = normalizarCalcMode(form.calc_mode);
   // A EXIGÊNCIA de sacado vem do TIPO do título, não do formato de cálculo.
   const exigeSacado = TIPOS_COM_SACADO.includes(form.tipo) && modoAtual !== 'capital_desagio' && form.produto !== 'capital_desagio';
-  // A TELA de parcelas é usada pelo tipo parcelável e por qualquer operação no
-  // formato Parcelado (a Tabela Price gera o próprio cronograma).
-  const isParcelado = modoAtual === PRICE;
-  const isParcelamento = exigeSacado || isParcelado;
   const isEmprestimoSemCedente = form.tipo === 'emprestimo' && exigeSacado;
   const step1Valid = isAssinatura
     ? !!form.client_id && parseFloat(form.rate) > 0 && !!form.produto && !!form.start_date
@@ -568,6 +565,24 @@ export default function OperacaoForm() {
 
   const isCapitalDesagio = form.calc_mode === 'capital_desagio' || form.produto === 'capital_desagio';
 
+  // ETAPA 2 — a tela acompanha o TIPO do produto e o FORMATO de cálculo:
+  //   cheque                      → digitação de títulos (padrão: face / inverso: repasse)
+  //   boleto e duplicata padrão   → digitação de títulos (deságio sobre a face)
+  //   boleto e duplicata inverso  → Tabela Price (repasse desejado em prestações)
+  const TIPOS_COM_FORMATO = ['cheque', 'boleto', 'duplicata'];
+  const mostraFormato = TIPOS_COM_FORMATO.includes(form.tipo) && modoAtual !== PRICE;
+  // O formato escolhido é a INTENÇÃO (face ou repasse), não o motor resultante:
+  // boleto/duplicata inverso roda na Tabela Price, mas continua sendo "Inverso".
+  const formatoAtual = form.calculo_inverso || modoAtual === FACE_POR_REPASSE ? 'inverso' : 'padrao';
+  const selecionarFormato = (formato) => {
+    if (formato === formatoAtual) return;
+    const inverso = formato === 'inverso';
+    setForm((f) => ({ ...f, calc_mode: inverso ? FACE_POR_REPASSE : DESAGIO_FACE, calculo_inverso: inverso }));
+    // O valor digitado muda de significado (face ↔ repasse): recomeça a digitação.
+    setTitulos([emptyTitulo()]);
+    setIsDirty(true);
+  };
+
   return (
     <ViewModeProvider initialMode="interno">
       <div className="p-4 md:p-6 h-full flex flex-col bg-gray-50/50 min-h-screen">
@@ -645,7 +660,7 @@ export default function OperacaoForm() {
         )}
 
         {/* Stepper */}
-        <WizardStepper currentStep={step} step2Label={isAssinatura ? 'Assinaturas' : isParcelamento ? 'Parcelas' : 'Digitação de Títulos'} />
+        <WizardStepper currentStep={step} step2Label={isAssinatura ? 'Assinaturas' : effectiveCalcMode === PRICE ? 'Parcelas' : 'Digitação de Títulos'} />
 
         {/* Content card */}
         <div className="flex-1 flex flex-col">
@@ -666,22 +681,29 @@ export default function OperacaoForm() {
             {step === 2 && (
               isAssinatura ? (
                 <StepAssinatura form={form} setForm={setForm} />
-              ) : isParcelamento ? (
-                <StepParcelas
-                  form={form}
-                  setForm={setForm}
-                  titulos={titulos}
-                  setTitulos={(v) => { setTitulos(v); setIsDirty(true); }}
-                  calcMode={effectiveCalcMode}
-                />
               ) : (
-                <StepDigitacaoTitulos
-                  titulos={titulos}
-                  setTitulos={(v) => { setTitulos(v); setIsDirty(true); }}
-                  form={form}
-                  isCapitalDesagio={isCapitalDesagio}
-                  calcMode={effectiveCalcMode}
-                />
+                <div className="space-y-4">
+                  {mostraFormato && (
+                    <FormatoCalculoSwitch formato={formatoAtual} onChange={selecionarFormato} />
+                  )}
+                  {effectiveCalcMode === PRICE ? (
+                    <StepParcelas
+                      form={form}
+                      setForm={setForm}
+                      titulos={titulos}
+                      setTitulos={(v) => { setTitulos(v); setIsDirty(true); }}
+                      calcMode={effectiveCalcMode}
+                    />
+                  ) : (
+                    <StepDigitacaoTitulos
+                      titulos={titulos}
+                      setTitulos={(v) => { setTitulos(v); setIsDirty(true); }}
+                      form={form}
+                      isCapitalDesagio={isCapitalDesagio}
+                      calcMode={effectiveCalcMode}
+                    />
+                  )}
+                </div>
               )
             )}
             {step === 3 && (

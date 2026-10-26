@@ -107,6 +107,9 @@ export function aceitaInversao(mode) {
 
 export const CALC_MODE_EMPREESTIMO = 'emprestimo';
 
+/** Tipos de título que, no sentido inverso, são calculados pela Tabela Price. */
+export const TIPOS_PARCELADOS = ['boleto', 'duplicata'];
+
 /**
  * Formato REALMENTE usado no cálculo da operação.
  * Regras (as mesmas de antes da renomeação, agora com nomes explícitos):
@@ -118,6 +121,11 @@ export function calcModeEfetivo({ tipo, calcMode, calculoInverso } = {}) {
   const modo = normalizarCalcMode(calcMode);
   if (modo === PRICE) return PRICE;
   if (tipo === CALC_MODE_EMPREESTIMO) return CALC_MODE_EMPREESTIMO;
+  // Boleto e Duplicata no sentido INVERSO não usam o deságio sobre a face: o
+  // repasse desejado é distribuído em prestações com juros sobre o saldo
+  // devedor (Tabela Price). É o que separa a digitação do Cheque, onde o
+  // inverso continua sendo face = repasse ÷ (1 − taxa × dias/30).
+  if (TIPOS_PARCELADOS.includes(tipo) && (calculoInverso || modo === FACE_POR_REPASSE)) return PRICE;
   return calculoInverso ? FACE_POR_REPASSE : modo;
 }
 

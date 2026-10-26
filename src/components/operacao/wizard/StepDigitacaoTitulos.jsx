@@ -57,6 +57,7 @@ export default function StepDigitacaoTitulos({ titulos, setTitulos, form, isCapi
         floatDias={parseFloat(form.float_dias) || 0}
         arredondarTaxaDiaria={form.arredondar_taxa_diaria}
         calcMode={calcMode}
+        tipoPadrao={['cheque', 'boleto', 'duplicata'].includes(form.tipo) ? form.tipo : undefined}
       />
       {validCount === 0 && (
         <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
