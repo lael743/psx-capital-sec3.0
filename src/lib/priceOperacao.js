@@ -3,19 +3,20 @@
  *
  * Regra financeira (a mesma em todos os pontos):
  *
- *   PV (valor presente)  = repasse solicitado + tarifas da operação
- *   parcela (face)       = PMT constante, obtido descontando o PV pelas taxas
+ *   PV (valor presente)  = repasse solicitado  (é o LÍQUIDO que o cedente recebe)
+ *   prestação (PMT)      = PMT constante, obtido descontando o PV pelas taxas
  *                          de CADA período (dias reais até o vencimento)
  *   juros do período k   = saldo_{k-1} × i_k
  *   amortização k        = PMT − juros_k   (a última absorve os centavos)
+ *   face k               = prestação + tarifa rateada da parcela
  *
  * Assim:
  *   · todas as parcelas têm o MESMO valor nominal (face);
  *   · os juros variam com o prazo de cada vencimento;
  *   · a amortização varia com os juros;
- *   · Σ amortização = PV  e  Σ líquido = repasse solicitado;
- *   · tarifas aparecem UMA única vez, discriminadas por parcela;
- *   · face = amortização + juros  (nada é cobrado ou descontado duas vezes).
+ *   · Σ amortização = PV  e  Σ líquido = repasse solicitado (nunca menor);
+ *   · TODAS as tarifas entram na face: Σ face = repasse + juros + tarifas;
+ *   · tarifas aparecem UMA única vez, embutidas e discriminadas por parcela.
  *
  * `linhasPriceDeTitulos` deriva a MESMA tabela a partir dos títulos já
  * gravados no formulário — é o que garante que a etapa de Parcelas, o Resumo &
@@ -103,20 +104,21 @@ export function cronogramaPriceOperacao({
   const totalDespesas = round2(despesas.reduce((s, v) => s + v, 0));
 
   const parcelaInformada = Number(valorParcela) || 0;
+  // O valor presente é o REPASSE. As tarifas NÃO são financiadas: elas são
+  // somadas à face de cada parcela (entram na cobrança, nunca no principal).
   let base;
-  let repasseFinal;
   if (parcelaInformada > 0) {
-    // Inverso: a parcela é conhecida; o valor presente é a soma descontada.
-    base = cronogramaPricePorParcela({
-      valorParcela: parcelaInformada,
+    // Inverso: a parcela informada é o que o cliente PAGA (já com a tarifa da
+    // parcela); descontado esse valor, chega-se ao repasse.
+    const principalPorParcela = round2(parcelaInformada - totalDespesas / n);
+    base = round2(cronogramaPricePorParcela({
+      valorParcela: principalPorParcela,
       taxaMensalPct,
       interestType,
       vencimentos: periodos.map((p) => ({ dias: p.intervalo, vencimento: p.vencimento })),
-    }).repasse;
-    repasseFinal = round2(base - totalDespesas);
+    }).repasse);
   } else {
-    repasseFinal = round2(repasse);
-    base = round2(repasseFinal + totalDespesas);
+    base = round2(repasse);
   }
 
   const cronograma = cronogramaPrice({
@@ -125,36 +127,36 @@ export function cronogramaPriceOperacao({
     interestType,
     vencimentos: periodos.map((p) => ({ dias: p.intervalo, vencimento: p.vencimento })),
   });
-  if (!cronograma.length) return { linhas: [], totais: totaisVazios(), repasse: repasseFinal, parcela: 0, base };
+  if (!cronograma.length) return { linhas: [], totais: totaisVazios(), repasse: base, parcela: 0, base };
 
-  // Parcela constante: a última amortização absorve o resíduo de centavos, de
-  // modo que face = amortização + juros em TODAS as linhas e Σ amortização = PV.
-  const parcela = round2(cronograma[0].valor);
+  // Prestação constante (juros + amortização): a última absorve o resíduo de
+  // centavos, de modo que Σ amortização = PV. A FACE de cada parcela é essa
+  // prestação MAIS a tarifa rateada dela.
+  const prestacao = round2(cronograma[0].valor);
   let somaAmortizacao = 0;
   const linhas = cronograma.map((r, k) => {
     const ultima = k === cronograma.length - 1;
-    const amortizacao = ultima ? round2(base - somaAmortizacao) : round2(parcela - r.juros);
+    const amortizacao = ultima ? round2(base - somaAmortizacao) : round2(prestacao - r.juros);
     somaAmortizacao = round2(somaAmortizacao + amortizacao);
     const despesa = despesas[k] || 0;
+    const juros = round2(prestacao - amortizacao);
     return {
       numero: k + 1,
       vencimento: r.vencimento,
       dias: periodos[k].decorridos,
-      face: parcela,
-      juros: round2(parcela - amortizacao),
+      face: round2(amortizacao + juros + despesa),
+      juros,
       amortizacao,
       saldo: round2(base - somaAmortizacao),
       despesa,
-      liquido: round2(amortizacao - despesa),
+      liquido: amortizacao,
     };
   });
-
-  fecharResiduoLiquido(linhas, repasseFinal);
 
   return {
     linhas,
     totais: totaisDeLinhas(linhas),
-    repasse: repasseFinal,
+    repasse: base,
     parcela: linhas[0]?.face || 0,
     base,
   };
@@ -162,38 +164,37 @@ export function cronogramaPriceOperacao({
 
 /**
  * Mesma tabela, derivada dos títulos do formulário (fonte exibida e gravada).
- * `valor_face` = parcela (face) e `valor_liquido` = amortização (parcela do PV).
+ * `valor_face` = face cobrada (prestação + tarifa), `valor_liquido` = amortização
+ * (a parte do repasse) e `outras_despesas` = tarifa embutida naquela parcela.
+ * A tarifa vem GRAVADA no título — não é recalculada a partir do formulário.
  */
 export function linhasPriceDeTitulos(titulos = [], {
   startDate,
   taxaMensalPct = 0,
   interestType = 'simples',
-  tarifaOperacao = 0,
-  tarifaPorTitulo = 0,
 } = {}) {
   const lista = (titulos || []).filter((t) => t && t.vencimento && parseFloat(t.valor_face) > 0);
   const n = lista.length;
   if (!n) return { linhas: [], totais: totaisVazios(), repasse: 0, parcela: 0 };
 
-  const despesas = rateioDespesas({ quantidade: n, tarifaOperacao, tarifaPorTitulo });
-
   const linhas = lista.map((t, k) => {
     const face = round2(parseFloat(t.valor_face) || 0);
     const dias = daysBetween(startDate, t.vencimento);
+    const despesa = round2(parseFloat(t.outras_despesas) || 0);
     const informada = parseFloat(t.valor_liquido);
     // Registro sem amortização gravada: reconstrói o valor presente do período.
     const amortizacao = informada > 0
       ? round2(informada)
-      : round2(face / (1 + taxaDoPeriodo(taxaMensalPct, dias, interestType)));
+      : round2(face / (1 + taxaDoPeriodo(taxaMensalPct, dias, interestType)) - despesa);
     return {
       numero: k + 1,
       vencimento: t.vencimento,
       dias,
       face,
-      juros: round2(face - amortizacao),
+      juros: round2(face - amortizacao - despesa),
       amortizacao,
-      despesa: despesas[k] || 0,
-      liquido: round2(amortizacao - (despesas[k] || 0)),
+      despesa,
+      liquido: amortizacao,
     };
   });
 
@@ -204,26 +205,13 @@ export function linhasPriceDeTitulos(titulos = [], {
     acumulado = round2(acumulado + l.amortizacao);
     l.saldo = round2(totalAmortizacao - acumulado);
   });
-  const totalDespesas = round2(linhas.reduce((s, l) => s + l.despesa, 0));
-  fecharResiduoLiquido(linhas, round2(totalAmortizacao - totalDespesas));
 
   return {
     linhas,
     totais: totaisDeLinhas(linhas),
-    repasse: round2(totalAmortizacao - totalDespesas),
+    repasse: totalAmortizacao,
     parcela: linhas[0]?.face || 0,
   };
-}
-
-/** Última parcela absorve o resíduo de centavos do líquido. */
-function fecharResiduoLiquido(linhas, alvo) {
-  if (!linhas.length) return;
-  const total = round2(linhas.reduce((s, l) => s + l.liquido, 0));
-  const residuo = round2(alvo - total);
-  if (residuo !== 0) {
-    const ultima = linhas[linhas.length - 1];
-    ultima.liquido = round2(ultima.liquido + residuo);
-  }
 }
 
 function totaisVazios() {

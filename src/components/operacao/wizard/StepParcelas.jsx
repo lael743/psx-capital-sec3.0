@@ -6,7 +6,7 @@ import {
   PRICE, DESAGIO_FACE, FACE_POR_REPASSE, calcModeEfetivo,
 } from '@/lib/formatosCalculo';
 import {
-  cronogramaPriceOperacao, datasParcelas, linhasPriceDeTitulos, rateioDespesas,
+  cronogramaPriceOperacao, datasParcelas, linhasPriceDeTitulos,
 } from '@/lib/priceOperacao';
 import ParcelasPriceTable from './ParcelasPriceTable';
 import ResumoPrice from './ResumoPrice';
@@ -64,6 +64,8 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
   useEffect(() => {
     if (titulos.length > 0 && titulos[0]?.vencimento) {
       const total = titulos.reduce((s, t) => s + (parseFloat(t.valor_face) || 0), 0);
+      // Parcelado: o campo é o REPASSE (Σ amortização), nunca a soma das faces.
+      const repasseTitulos = titulos.reduce((s, t) => s + (parseFloat(t.valor_liquido) || 0), 0);
       let interval = 30;
       if (titulos.length > 1 && titulos[0].vencimento && titulos[1].vencimento) {
         const d1 = new Date(titulos[0].vencimento + 'T00:00:00');
@@ -71,13 +73,42 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
         interval = Math.max(1, Math.round((d2 - d1) / 86400000));
       }
       setConfig({
-        valorTotal: String(round2(total)),
+        valorTotal: String(round2(isPrice && repasseTitulos > 0 ? repasseTitulos : total)),
         numParcelas: titulos.length,
         intervalo: interval,
         primeiroVencimento: titulos[0].vencimento
       });
     }
   }, []);
+
+  // As tarifas da operação têm de estar SEMPRE embutidas na face das parcelas.
+  // Se elas (ou a taxa) mudarem depois de gerar, o cronograma é refeito
+  // mantendo o repasse escolhido e as datas: a diferença vai para a cobrança,
+  // nunca para o bolso do cedente.
+  useEffect(() => {
+    if (!isPrice || !titulos.length || !form.start_date) return;
+    const repasseAtual = round2(titulos.reduce((s, t) => s + (parseFloat(t.valor_liquido) || 0), 0));
+    if (repasseAtual <= 0) return;
+    const esperado = cronogramaPriceOperacao({
+      vencimentos: titulos.map((t) => t.vencimento),
+      startDate: form.start_date,
+      taxaMensalPct: rate,
+      interestType: form.interest_type,
+      repasse: repasseAtual,
+      tarifaOperacao,
+      tarifaPorTitulo
+    });
+    const faceAtual = round2(titulos.reduce((s, t) => s + (parseFloat(t.valor_face) || 0), 0));
+    if (!esperado.linhas.length || Math.abs(esperado.totais.face - faceAtual) <= 0.01) return;
+    setTitulos(esperado.linhas.map((l, i) => ({
+      ...titulos[i],
+      numero: `${l.numero}/${esperado.linhas.length}`,
+      vencimento: l.vencimento,
+      valor_face: String(l.face),
+      valor_liquido: String(l.amortizacao),
+      outras_despesas: String(l.despesa)
+    })));
+  }, [isPrice, titulos, form.start_date, form.interest_type, rate, tarifaOperacao, tarifaPorTitulo]);
 
   const gerarParcelas = () => {
     const total = parseFloat(config.valorTotal) || 0;
@@ -113,7 +144,7 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
         vencimento: l.vencimento,
         valor_face: String(l.face),
         valor_liquido: String(l.amortizacao),
-        outras_despesas: ''
+        outras_despesas: String(l.despesa)
       })));
       return;
     }
@@ -166,18 +197,15 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
       return;
     }
     // Parcelado: mudar o vencimento muda os dias do período, então o cronograma
-    // é recalculado mantendo o MESMO valor presente (Σ amortização). As
-    // parcelas continuam iguais e o repasse ao cliente não se altera.
-    const pv = round2(titulos.reduce((s, t) => s + (parseFloat(t.valor_liquido) || 0), 0));
-    const despesas = round2(rateioDespesas({
-      quantidade: titulos.length, tarifaOperacao, tarifaPorTitulo,
-    }).reduce((s, v) => s + v, 0));
+    // é recalculado mantendo o MESMO repasse (Σ amortização). As parcelas
+    // continuam iguais e o líquido do cedente não se altera.
+    const repasseAtual = round2(titulos.reduce((s, t) => s + (parseFloat(t.valor_liquido) || 0), 0));
     const { linhas } = cronogramaPriceOperacao({
       vencimentos: titulos.map((t, i) => i === idx ? vencimento : t.vencimento),
       startDate: form.start_date,
       taxaMensalPct: rate,
       interestType: form.interest_type,
-      repasse: round2(pv - despesas),
+      repasse: repasseAtual,
       tarifaOperacao,
       tarifaPorTitulo
     });
@@ -188,7 +216,7 @@ export default function StepParcelas({ form, setForm, titulos, setTitulos, calcM
       vencimento: l.vencimento,
       valor_face: String(l.face),
       valor_liquido: String(l.amortizacao),
-      outras_despesas: ''
+      outras_despesas: String(l.despesa)
     })));
   };
 

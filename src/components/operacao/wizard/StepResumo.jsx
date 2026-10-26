@@ -215,7 +215,7 @@ export default function StepResumo({ form, setForm, selectedClient, titulos, doc
             totalDesagio={totals.totalDesagio}
             tarifaOperacao={tarifaOperacao}
             tarifaTitulos={tarifaTitulos}
-            totalOutras={totals.totalOutras}
+            totalOutras={isPrice ? 0 : totals.totalOutras}
             valorLiquido={valorLiquido}
             prazoMedio={totals.prazoMedio}
             desagioPeriodo={totals.desagioPeriodo}

@@ -74,12 +74,13 @@ export function calcTituloRow(titulo, startDate, rate, interestType, floatDias, 
     desagio = round2(valorFace - liquido);
   } else if (modo === PRICE) {
     // Parcelado — a linha já traz a parcela (face) e a amortização calculadas
-    // pela Tabela Price em formatosCalculo.cronogramaPrice.
+    // pela Tabela Price em formatosCalculo.cronogramaPrice. A tarifa da parcela
+    // vem embutida na face e destacada em outras_despesas: o deságio é o juro.
     valorFace = inputValor;
     const amortizacao = parseFloat(titulo.valor_liquido) || 0;
     if (amortizacao > 0) {
       liquido = round2(amortizacao);
-      desagio = round2(valorFace - liquido);
+      desagio = round2(valorFace - liquido - outrasDespesas);
     } else {
       desagio = calcDesagioTitulo(valorFace, rate, dias, interestType, arredondarTaxaDiaria);
       liquido = round2(valorFace - desagio - outrasDespesas);
@@ -185,10 +186,16 @@ export function resumoFinanceiro({ titulos, form, calcMode }) {
   // `repasseConhecido` = o usuário digita o repasse e o sistema calcula a face.
   // (era o antigo `isPadrao`, cujo nome estava invertido em relação à tela)
   const repasseConhecido = modo === FACE_POR_REPASSE;
+  // Parcelado: as tarifas já estão EMBUTIDAS na face de cada parcela
+  // (outras_despesas do título). Descontá-las de novo tiraria do cedente um
+  // valor que ele não escolheu — o líquido é sempre o repasse solicitado.
+  const tarifasNaFace = modo === PRICE;
   const isPadrao = repasseConhecido;
   const isEmprestimo = modo === 'emprestimo';
 
-  const valorLiquido = (repasseConhecido || isEmprestimo) ? totals.totalLiquido : round2(totals.totalLiquido - totalTarifas);
+  const valorLiquido = (repasseConhecido || isEmprestimo || tarifasNaFace)
+    ? totals.totalLiquido
+    : round2(totals.totalLiquido - totalTarifas);
   const totalReceivable = repasseConhecido
     ? round2(totals.totalFace + totals.totalOutras + totalTarifas)
     : totals.totalFace;
@@ -240,7 +247,9 @@ export function resumoFinanceiro({ titulos, form, calcMode }) {
     // deduções = receita financeira (juros) + despesas cobradas do cliente.
     deducoes: round2(totalReceivable - valorLiquido),
     receitaFinanceira: round2(totals.totalDesagio),
-    despesas: round2(totals.totalOutras + totalTarifas),
+    // Parcelado: outras_despesas dos títulos É a tarifa embutida na face — somar
+    // as duas contaria as mesmas tarifas duas vezes.
+    despesas: tarifasNaFace ? totalTarifas : round2(totals.totalOutras + totalTarifas),
   };
 }
 

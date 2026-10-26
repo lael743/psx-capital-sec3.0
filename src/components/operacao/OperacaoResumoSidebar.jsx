@@ -29,7 +29,10 @@ export default function OperacaoResumoSidebar({ operacao, cheques = [] }) {
   const tarifaOperacao = operacao.tarifa_operacao || 0;
   const tarifaPorTitulo = operacao.tarifa_por_titulo || 0;
   const tarifas = tarifaOperacao + tarifaPorTitulo * titulos.length;
-  const liquido = isEmprestimo ? totals.totalLiquido : totals.totalLiquido - tarifas;
+  // Parcelado: as tarifas já vêm embutidas na face de cada parcela — descontar
+  // de novo reduziria o líquido abaixo do repasse que o cedente escolheu.
+  const isPrice = calcMode === 'price';
+  const liquido = (isEmprestimo || isPrice) ? totals.totalLiquido : totals.totalLiquido - tarifas;
   const desagioDisplay = isEmprestimo ? (totals.totalFace - totals.totalLiquido) : totals.totalDesagio;
 
   return (
@@ -44,7 +47,7 @@ export default function OperacaoResumoSidebar({ operacao, cheques = [] }) {
           <span className="text-muted-foreground">(−) Deságio</span>
           <span className="font-semibold text-red-600">{formatCurrency(desagioDisplay)}</span>
         </div>
-        {totals.totalOutras > 0 && (
+        {!isPrice && totals.totalOutras > 0 && (
           <div className="flex justify-between">
             <span className="text-muted-foreground">(−) Outras Despesas</span>
             <span className="font-semibold text-red-600">{formatCurrency(totals.totalOutras)}</span>
